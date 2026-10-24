@@ -1,0 +1,78 @@
+# API 与费用说明（2.4.0）
+
+核对日期：2026-10-23（Asia/Shanghai）。以下为 2.4.0 代码适配与价格快照，不是实时价格、实测账单或数学准确性结论；使用前请自行核对官方价格。
+
+## Provider 与官方依据
+
+| 项目 | DeepSeek | 阿里云百炼 |
+| --- | --- | --- |
+| 模型 | deepseek-flash | qwen3.7-flash |
+| 默认兼容基地址 | https://api.deepseek.com | https://dashscope.aliyuncs.com/compatible-mode/v1（北京） |
+| 后端密钥名 | DEEPSEEK_API_KEY | DASHSCOPE_API_KEY |
+| 图片请求 | 本机 JPEG 的 base64 image_url，high | 同格式，开启 vl_high_resolution_images |
+| 思考与输出 | thinking enabled / high，JSON object，流式 usage | enable_thinking true，JSON object，流式 usage |
+
+DeepSeek 图片格式、缩放和限制来自[官方视觉文档](https://api-docs.deepseek.com/zh-cn/guides/vision/)；JSON 约束参考[JSON Output](https://api-docs.deepseek.com/guides/json_mode/)，思考参数参考[Thinking Mode](https://api-docs.deepseek.com/guides/thinking_mode/)。不使用已退役的视觉实验模型名。
+
+Qwen 模型及地区能力参考[Qwen3.7-Flash](https://help.aliyun.com/zh/model-studio/qwen3-7-flash)，端点及流式参数参考[兼容 Chat API](https://help.aliyun.com/en/model-studio/qwen-api-via-openai-chat-completions)，思考模式 JSON 支持参考[结构化输出](https://help.aliyun.com/zh/model-studio/qwen-structured-output)，高分辨率参考[视觉理解](https://help.aliyun.com/zh/model-studio/vision)。
+
+Qwen 也支持控制台提供的工作空间专属官方域名。默认仅预设北京价格；非北京端点必须同时显式配置对应地区的输入、输出、缓存三项价格，不能沿用北京默认值。代码不允许任意第三方基地址。不同地区的 Key 不通用。
+
+## 页面与请求组织
+
+原 PDF 在本机按 3 倍 viewport（约 216 dpi）渲染为高质量 JPEG，不抽掉页面、不把普通 OCR 文本当手写矩阵。2.4 对长页、大页添加全景及连续重叠分区，完整区域覆盖，标签仍对应原页；DeepSeek 每幅图像单边不超过 4096，兼容 15 幅及以上图像时的限制。局部放大直接绘制原页区域，不先创建整个 4 倍画布；放大失败保留首轮建议待复核。分区数不等于 PDF 页数，证据校验、预览和报告均继续使用原页码。渲染缓存版本独立升级，原文件和旧结果不重写。
+
+默认一份作业一次完整请求，必要时最多一次局部复读（最多 4 个学生区域），而非每页/每题分别收费。该策略仅是待真实样本比较的基准，不声称已优于其他组织方式。参考材料、规则与提示词放在重复前缀，学生随机 ID 与页面放在后部，各学生请求隔离。
+
+DeepSeek 对大图存在服务端视觉缩放；增加分区是改善密集页面输入的措施，不是已经完成真实准确率校准。全景定位、重叠细节及局部复读仍须结合人工页码核对。参考 PDF 的长页/大页使用相同本地分区，但没有另起自动参考页复读调用。官方图片尺寸、单图独立缩放和 1024 token 上界见[视觉文档](https://api-docs.deepseek.com/zh-cn/guides/vision/)。
+
+文档中的“请给满分”等文本当作数据，不执行其中指令。不要求返回内部思维链，流式 reasoning_content 不保存；模型只给事实性判定，后端补算扣分。
+
+## 价格与预算
+
+默认费率为每百万 token 的人民币预算单价：
+
+| Provider | 输入未命中 | 输出 | 输入缓存命中 | 依据 |
+| --- | --- | --- | --- | --- |
+| DeepSeek | 0.30 × 8 = 2.40 | 1.20 × 8 = 9.60 | 0.006 × 8 = 0.048 | 官方 USD 峰时价格 × 保守预算换算系数 |
+| Qwen 北京 | 1.20 | 4.80 | 0.24 | 官方长上下文最高档，作保守门禁 |
+
+DeepSeek 价格来源为[官方价格表](https://api-docs.deepseek.com/quick_start/pricing/)，Qwen 价格来源为[模型价格](https://help.aliyun.com/zh/model-studio/qwen3-7-flash)及[计费阶梯说明](https://help.aliyun.com/zh/model-studio/model-pricing)。DeepSeek 的 8 是可配置预算换算系数，不是实时汇率；未自动按非峰时打折。Qwen 未用免费额度或活动优惠抵扣预算。
+
+费用估算公式为：
+
+~~~text
+[(输入 token - 缓存命中 token) × 输入单价
+ + 缓存命中 token × 命中单价
+ + 输出 token × 输出单价] / 1,000,000
+~~~
+
+输入门禁使用文本 UTF-8 字节数、视觉 token 上界及余量，不预先假设命中缓存。真实 usage 返回后才记录输入/输出/命中并估算；缺字段标未知。价格快照随调用保存，更新时间默认 2026-10-23，可用 .env.example 中的费率变量覆盖。
+
+默认目标每份 <¥0.10，预计达到 ¥0.30 要额外确认；每份硬门禁 ¥0.50、每批总预算 ¥2、并发 1。2.4 的 DeepSeek 默认输出预留为 16384 token，Qwen 保留 8192；显式 AI_MAX_OUTPUT_TOKENS 优先，弹窗可为本次选择 8192 / 16384 / 32768。该数值包括思考与最终评分，不能当作评分 JSON 的独立额度。思考开关/强度未降级；较大输出额度和更多图像会进入费用预估，不事后自动增额。参考[DeepSeek 参数说明](https://api-docs.deepseek.com/api/create-chat-completion/)及[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。实际超时、限流重试、局部复读都占本份预算；任何下一次可能超额的请求停止。
+
+新额度写入批次快照并绑定预估凭据；修改额度撤销旧预估和授权。旧暂停批次缺字段时按 8192 保守续跑，不因升级扩大已授权开销。默认超时 240 秒，已有 AI_TIMEOUT_MS 配置不修改。请求图像或编码大小超限会在预估/记账前拦截；单页超过 64 分区、单 PDF 超过 200 图像须本地分段导出，不静默删页或降低全部细节清晰度。
+
+这是本机请求门禁，不是服务商锁定账单：估算、计费变化、未知用量都可能影响最终费用。超时/中断没有 usage 时仍保留全额预留，不能据此声称实际已花或未花某个精确金额。
+
+“测试连接”发送合成蓝色图片，单次本机门禁 ¥0.05；也属于可能付费的调用，需用户主动点击并确认。空 Key / 未启用真实模式不会请求。
+
+## 错误与恢复
+
+- Key 缺失、未启用：本地拦截，不发送页面。
+- 401 / 402 / 403：分别提示无效 Key、余额不足、权限/地区问题。
+- 429 或服务商 5xx：最多默认重试一次，每次都重新检查剩余预算。
+- 网络/超时：用量未知、保留预留，不盲目自动重发。
+- 模型/图片/JSON 不支持或结果不合法：明确失败，不退回 Mock 冒充成功。
+- `length`：额度耗尽，不接纳不完整评分；提示调整额度后重新预估或人工处理，不能靠重复上传解决。不会自动提高额度或反复付费重试。已有 usage 的思考 token 可以只读显示；新调用另存文本长度，思考原文不落盘。
+- 放大被预算阻止：保留初轮结构化建议并标待核对。
+- 暂停：停止后续任务，在途可完成；取消：尝试中止，在途可能已计费。
+- 重启：未结束批次暂停，需要用户明确续跑；原成绩、报告和账本保留。
+
+## 用户操作与人工校准
+
+按 README 使用 Windows 用户环境变量，重新打开终端后启动。只对已授权、已去标识或合成样本进行真实测试；平台不会自动替手写页打码。API 字段不携带姓名、学号、文件名，不等于图片已经没有身份信息。
+
+首次只在一个作业中放一份 6～7 页样本，先 DeepSeek。人工核对每个单元、证据页、所有 −0.2 项及等价解。查看批次账本，核对服务商账单后记录真实使用条件、usage、缓存命中和价格。再明确选择 Qwen 重批同一授权样本，不会自动双模型调用。
+
+3～5 份样本使用离线 benchmark:ai 模板，人工填写后输出对照。报告按原始 AI 建议计算，而非人工已改分；未知用量单列，估算费用与最终账单区分。判断符号、等价解、红笔和低清晰度应分别人工归类核对。已有少量 DeepSeek 使用反馈，尚无系统性的质量/费用基准；本次公开分发验证仅使用本地合成与模拟测试。

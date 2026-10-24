@@ -1,0 +1,45 @@
+import {questionKey,type Question,type QuestionChild,type Config} from './domain.js';
+
+/** Legacy string lists remain readable; IDs survive label changes and reordering. */
+export function childrenOf(q:Question):QuestionChild[]{
+  return q.children??(q.subparts??[]).map(label=>({id:'legacy:'+questionKey(q)+':'+label,label,confirmed:true}));
+}
+export function withChildren(q:Question,children:QuestionChild[]):Question {
+  return {...q,children,subparts:children.map(c=>c.label)};
+}
+export function splitUnits(q:Question){return q.type==='graded'&&!q.part&&(q.kind==='true_false'||q.unitMode==='independent');}
+
+/** Locally extracted candidates, never authoritative teacher configuration. */
+export function extractChildren(text:string,kind:Question['kind']='solution'):QuestionChild[]{
+  const normalized=text.replace(/^([ \t]*[a-z])[ \t]*\r?\n[ \t]*([.．、)）])/gim,'$1$2');
+  const matches=[...normalized.matchAll(/^[ \t]*([a-z])[ \t]*[.．、)）][ \t]*(?=\S|$)/gim)];
+  // A sequence beginning with a avoids treating isolated mathematical variables as labels.
+  const sequence:typeof matches=[];
+  for(const match of matches){if(match[1].toLowerCase()===String.fromCharCode(97+sequence.length))sequence.push(match);}
+  if(sequence.length<2)return [];
+  return sequence.map((m,i)=>{
+    const sourceText=normalized.slice(m.index!+m[0].length,sequence[i+1]?.index??normalized.length).trim();
+    const child:QuestionChild={id:'candidate:'+m[1].toLowerCase(),label:m[1].toLowerCase(),confirmed:false};
+    if(kind!=='true_false')return {...child,answer:sourceText};
+    const lines=sourceText.split('\n').map(l=>l.trim()).filter(Boolean);
+    const boundary=lines.map((line,index)=>index>0&&/^(?:(?:参考(?:答案|解)|答案|解答|判断)\s*[:：]\s*)?(?:对|错|正确|错误|是|否|True|False|T|F|[√×✓✗])(?:[，,。.:：、]|$)/i.test(line)?index:-1).filter(i=>i>=0);
+    if(boundary.length===1){const at=boundary[0];return {...child,prompt:lines.slice(0,at).join('\n'),answer:lines.slice(at).join('\n'),sourceText};}
+    return {...child,prompt:'',answer:'',sourceText,parseWarning:'未能可靠分离命题与参考判断，请对照原始片段和 PDF 手工编辑、核对。'};
+  });
+}
+export function childContentKey(q:Question,label:string){return JSON.stringify([questionKey(q),label]);}
+
+/** Explicit additive reconciliation; teacher edits and manually added questions win. */
+export function reconcileQuestions(previous:Config,candidate:Config,replaceContent:ReadonlySet<string>=new Set()):Config {
+  const remaining=new Map(candidate.questions.map(q=>[questionKey(q),q]));
+  const questions=previous.questions.map(old=>{
+    const parsed=remaining.get(questionKey(old));remaining.delete(questionKey(old));
+    if(!parsed)return old;
+    const children=childrenOf(old).map(child=>{
+      const next=childrenOf(parsed).find(c=>c.label===child.label);
+      return next&&replaceContent.has(childContentKey(old,child.label))?{...child,prompt:next.prompt??'',answer:next.answer??'',sourceText:next.sourceText,parseWarning:next.parseWarning,confirmed:false}:child;
+    });const labels=new Set(children.map(c=>c.label));
+    return withChildren(old,[...children,...childrenOf(parsed).filter(c=>!labels.has(c.label))]);
+  });
+  return {...previous,questions:[...questions,...remaining.values()],confirmed:false};
+}

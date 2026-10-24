@@ -1,0 +1,50 @@
+{
+  "name": "linear-algebra-grading-desk",
+  "version": "2.4.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.13.0"
+  },
+  "scripts": {
+    "dev": "tsx watch --exclude ./data/** --exclude ./人工批改参考/** --exclude ./第1版prompt相关文件/** --exclude ./codex输出/** --exclude ./codex工作区/** --exclude ./src/** --exclude ./public/** server/index.ts",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "build": "npm run typecheck && vite build && tsc -p tsconfig.server.json",
+    "start": "node build/server/index.js",
+    "test": "tsx --test tests/*.test.ts",
+    "test:browser": "tsx scripts/browser-smoke.ts",
+    "test:dev": "tsx scripts/dev-smoke.ts",
+    "test:ai-browser": "tsx scripts/ai-browser-smoke.ts",
+    "test:selection-browser": "tsx scripts/selection-browser-smoke.ts",
+    "test:reliability-browser": "tsx scripts/reliability-browser-smoke.ts",
+    "test:pdf-recovery-browser": "tsx scripts/pdf-recovery-browser-smoke.ts",
+    "benchmark:ai": "tsx scripts/ai-benchmark.ts"
+  },
+  "dependencies": {
+    "@napi-rs/canvas": "1.0.13",
+    "adm-zip": "0.6.1",
+    "express": "^5.1.0",
+    "lucide-react": "^0.468.0",
+    "mammoth": "^1.10.0",
+    "multer": "2.5.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "6.2.108",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/adm-zip": "^0.5.7",
+    "@types/express": "^5.0.3",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0",
+    "vite": "^7.1.0"
+  },
+  "license": "MIT"
+}
