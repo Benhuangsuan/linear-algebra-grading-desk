@@ -1,6 +1,13 @@
 import { configSchema, questionKey, type Config } from './domain.js';
 import {childrenOf,splitUnits} from './questions.js';
 
+/** Used only when creating a new local result, never when reading saved grades. */
+export function localGradingConfig(config:Config):Config {
+  if(config.mode==='deduction'&&(config.policy||config.questions.some(splitUnits)))return unitConfig(config);
+  // Preserve generic points/free-form courses; their existing scoring contract is unchanged.
+  return structuredClone(config);
+}
+
 /** New grading snapshots only; never rewrites saved assignments or historical grades. */
 export function unitConfig(config:Config):Config {
   if(!config.confirmed)throw new Error('请先确认作业规则');
@@ -12,7 +19,7 @@ export function unitConfig(config:Config):Config {
     const sources=[...(q.referenceSources??[]),...children.flatMap(c=>c.referenceSources??[])];
     const referenceSources=sources.filter((s,i)=>sources.findIndex(p=>p.fileId===s.fileId&&p.page===s.page)===i).map(s=>({...s,graphic:sources.some(p=>p.fileId===s.fileId&&p.page===s.page&&p.graphic)}));
     if(split&&!children.length)throw new Error(questionKey(q)+' 请确认独立命题/小题列表');
-    if(split&&children.some(c=>c.confirmed===false))throw new Error(questionKey(q)+' 的候选小问尚未核对');
+    if(split&&children.some(c=>c.confirmed===false))throw new Error(questionKey(q)+' 的小问尚未核对，请先到作业设置完成校对并保存。');
     return split?children.map(child=>({...q,part:child.label,children:[],subparts:[],unitMode:'whole' as const,
       parentKey:questionKey(q),childId:child.id,referenceSources,
       prompt:child.prompt?[q.prompt,child.prompt].filter(Boolean).join('\n'):q.prompt,

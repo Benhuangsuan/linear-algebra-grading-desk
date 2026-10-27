@@ -38,13 +38,13 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
   }
   return <div className="setup-page">
     {error&&<Notice tone="danger">{error}</Notice>}
-    <div className="settings-section"><div className="section-heading"><h2>作业信息</h2><button className="primary" aria-describedby="settings-save-help" disabled={busy||helperBusy} onClick={()=>void save()}><Save size={15}/>{busy?'处理中…':'保存设置'}{dirty?' *':''}</button></div>
-      <p id="settings-save-help" className={'settings-save-state'+(dirty?' unsaved':'')} role="status">{busy||helperBusy?'正在整理或保存，请等待完成后再保存设置。':dirty?'存在尚未保存的更改，请点击“保存设置”。':'当前题目和规则已保存到本机。'}</p>
+    <div className="settings-section"><div className="section-heading"><h2>作业信息</h2><button className="primary" aria-describedby={dirty||busy||helperBusy?'settings-save-help':undefined} disabled={busy||helperBusy} onClick={()=>void save()}><Save size={15}/>{busy?'处理中…':'保存设置'}{dirty?' *':''}</button></div>
+      {(dirty||busy||helperBusy)&&<p id="settings-save-help" className={'settings-save-state'+(dirty?' unsaved':'')} role="status">{busy||helperBusy?'正在整理或保存，请等待完成后再保存设置。':dirty?'存在尚未保存的更改，请点击“保存设置”。':'当前题目和规则已保存到本机。'}</p>}
       <div className="form-grid"><label>作业名称<input disabled={busy||helperBusy} value={draft.title} maxLength={200} onChange={e=>change({...draft,title:e.target.value})}/></label><label>作业范围<input disabled={busy||helperBusy} placeholder="例如 1.1-1.3 或 2.2-2.4,2.8" value={draft.scope} onChange={e=>change({...draft,scope:e.target.value,config:{...draft.config,confirmed:false}})}/></label></div>
       <details className="quiet-details"><summary>补充说明</summary><textarea aria-label="作业说明" rows={3} value={draft.description} onChange={e=>change({...draft,description:e.target.value})}/></details>
     </div>
     <FilesPanel assignmentId={assignment.id} files={files} onRefresh={onSaved} onUploaded={async uploaded=>{await onSaved();if(method==='ai'){setMessage('文件已上传。请选择要交给 AI 整理的页面，再预估费用并决定是否开始。');return;}await generate(uploaded);}} disabled={assignment.archived||busy||helperBusy}/>
-    <section className="settings-section"><div className="section-heading"><h2>评分规则</h2></div><div className="rule-summary"><div><strong>10</strong><span>满分</span></div><div><strong>−0.2</strong><span>每题漏做</span></div><div><strong>−0.1</strong><span>每处错误</span></div></div><p className="rule-description">按题目配置检查完成或批改正确性；未检索到作答暂按漏做处理。</p><details className="quiet-details"><summary>判分原则</summary><p>判断题逐命题计分；解答题默认整题，接受正确的不同方法。仅明确独立的小题分别计分；同一单元不重复扣分，已有成绩保留原规则。</p></details></section>
+    <section className="settings-section"><div className="section-heading"><h2>评分规则</h2></div><div className="rule-summary"><div><strong>10</strong><span>满分</span></div><div><strong>−0.2</strong><span>单元漏做</span></div><div><strong>−0.1</strong><span>单元做错</span></div></div><details className="quiet-details"><summary>判分原则</summary><p>判断题逐命题计分；解答题默认整题，接受正确的不同方法。仅明确独立的小题分别计分；同一单元不重复扣分；未检索到作答暂按漏做，须人工核对。已有成绩保留原规则。</p></details></section>
     <section className="settings-section"><div className="section-heading"><h2>题目清单 <span className="count">{draft.config.questions.length}</span></h2></div>
       {message&&<p className="save-message">{message}</p>}
       <details className="reference-step reference-workflow" open><summary>整理参考答案</summary><label>要怎样从参考答案整理出题目？<select disabled={busy||helperBusy} value={method} onChange={e=>setMethod(e.target.value as typeof method)}><option value="auto">自动整理（推荐，免费）</option><option value="text">只按文字整理（免费）</option><option value="ai">AI 辅助整理（可能收费）</option></select></label>
@@ -90,7 +90,7 @@ function QuestionModal({q:original,files,onSave,onClose,onDirty}:{q:Question;fil
       <label>题型<select value={q.kind??'solution'} onChange={e=>setQ({...q,kind:e.target.value as Question['kind']})}><option value="solution">解答题</option><option value="true_false">判断题</option></select></label>
       {q.kind!=='true_false'&&<label>解答题扣分单元<select value={q.unitMode??'whole'} onChange={e=>setQ({...q,unitMode:e.target.value as Question['unitMode']})}><option value="whole">整题一个单元</option><option value="independent">小问互相独立，逐项计分</option></select></label>}
       <label>漏做扣分<input type="number" step="0.1" min={0} max={10} value={q.missingPenalty??''} onChange={e=>setQ({...q,missingPenalty:num(e.target.value)})}/></label>
-      <label>每处错误扣分<input type="number" step="0.1" min={0} max={10} disabled={q.type==='completion_only'} value={q.errorPenalty??''} onChange={e=>setQ({...q,errorPenalty:num(e.target.value)})}/></label>
+      <label>本单元错误扣分<input type="number" step="0.1" min={0} max={10} disabled={q.type==='completion_only'} value={q.errorPenalty??''} onChange={e=>setQ({...q,errorPenalty:num(e.target.value)})}/></label>
     </div>
     {!q.part&&<section className="child-editor"><div className="section-heading"><h3>小问 <span className="count">{children.length}</span></h3><button type="button" onClick={()=>updateChildren([...children,{id:crypto.randomUUID(),label:String.fromCharCode(97+children.length),confirmed:false}])}>添加小问</button></div>
       <p className="subtle">{splitUnits(q)?'每个小问分别扣分，默认继承大题规则。':'小问仅表示题目结构，随整题批改。'}</p>

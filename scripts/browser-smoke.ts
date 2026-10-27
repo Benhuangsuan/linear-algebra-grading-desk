@@ -28,6 +28,8 @@ try {
   await page.getByRole('button',{name:'保存设置'}).click();
   await expect.poll(async()=>(await getState()).assignments[0].config.confirmed).toBe(true);
   const a=(await getState()).assignments[0];if(a.config.questions.length!==19)throw new Error('题号生成不完整');
+  // Complete the synthetic reference review before creating new independent grading snapshots.
+  const checked=await page.request.put(url+'/api/assignments/'+a.id,{data:{...a,config:{...a.config,questions:a.config.questions.map(q=>({...q,children:q.children?.map(c=>({...c,confirmed:true}))}))}}});expect(checked.ok()).toBe(true);await page.reload();
   await page.getByRole('button',{name:'学生作业',exact:true}).click();await page.getByLabel('上传作业',{exact:true}).setInputFiles(fixtures);
   const rows=page.getByTestId('submission-row');await expect(rows).toHaveCount(3);
   await expect(rows.nth(2).locator('.submission-name strong')).toHaveText('测试同学');
@@ -40,23 +42,24 @@ try {
   const s=(await getState()).submissions[0];const affected=deductionRows(s.grade!.config,s.review!).filter(r=>(r.deduction??0)>0||r.deduction===null||r.recognition==='uncertain');
   await expect(rows.first().locator('.deduction-item')).toHaveCount(affected.length);
   await rows.first().getByRole('button',{name:'更多操作 测试甲',exact:true}).click();await page.getByRole('button',{name:'修改评分',exact:true}).click();
-  await page.getByLabel('选择题目',{exact:true}).selectOption('1.1 / 34');await page.getByLabel('评分判定').selectOption('error');await page.getByLabel('错误处数').fill('2');await page.getByLabel('扣分原因').fill('第 a、c 小问判断错误。');await page.getByLabel('证据页码',{exact:true}).fill('2,3');await page.getByLabel('证据页码',{exact:true}).blur();
+  for(const key of s.grade!.config.questions.map(q=>q.section+' / '+q.number+(q.part?' / '+q.part:''))){await page.getByLabel('选择题目',{exact:true}).selectOption(key);await page.getByRole('button',{name:'已核对当前项',exact:true}).click();}
+  for(const part of ['a','c']){await page.getByLabel('选择题目',{exact:true}).selectOption('1.1 / 34 / '+part);await page.getByLabel('评分判定').selectOption('error');await page.getByLabel('扣分原因').fill('合成命题 '+part+' 判断错误。');await page.getByLabel('证据页码',{exact:true}).fill('2,3');await page.getByLabel('证据页码',{exact:true}).blur();}
   await page.getByRole('button',{name:'保存评分',exact:true}).click();await expect(page.getByRole('dialog')).toHaveCount(0);
-  let saved=(await getState()).submissions[0];if(saved.review!.find(r=>r.key==='1.1 / 34')!.deduction!==.2)throw new Error('错误处数扣分不符');
+  let saved=(await getState()).submissions[0];if(['a','c'].some(part=>saved.review!.find(r=>r.key==='1.1 / 34 / '+part)!.deduction!==.1))throw new Error('独立小问扣分不符');
   await expect(rows.first().locator('.submission-score strong')).toHaveText(String(summarize(saved.grade!.config,saved.review!).score));
-  const item=rows.first().locator('.deduction-item').filter({hasText:'1.1 / 34'});await expect(item).toContainText('−0.2');
+  const item=rows.first().locator('.deduction-item').filter({hasText:'1.1 / 34 / a'});await expect(item).toContainText('−0.1');
   const evidence=item.getByRole('link',{name:/第 2 页/});await expect(evidence).toHaveAttribute('target','_blank');await expect(evidence).toHaveAttribute('href',/#page=2$/);
-  await item.getByRole('button',{name:'修改',exact:true}).click();await page.getByLabel('评分判定').selectOption('correct');await page.getByRole('button',{name:'保存评分'}).click();await expect(rows.first().locator('.deduction-item').filter({hasText:'1.1 / 34'})).toHaveCount(0);
+  await item.getByRole('button',{name:'修改',exact:true}).click();for(const part of ['a','c']){await page.getByLabel('选择题目',{exact:true}).selectOption('1.1 / 34 / '+part);await page.getByLabel('评分判定').selectOption('correct');}await page.getByRole('button',{name:'保存评分'}).click();await expect(rows.first().locator('.deduction-item').filter({hasText:/1\.1 \/ 34 \/ [ac]/})).toHaveCount(0);
   await rows.first().getByRole('button',{name:'确认成绩'}).click();await expect(rows.first()).toHaveClass(/confirmed/);await expect(rows.first().getByRole('button',{name:'确认成绩'})).toHaveCount(0);
-  // Mock omissions are at indices 3, 10, 17; remaining errors at 1 and 16.
-  // After correcting 1.1/34: 10 - 3*0.2 - 2*0.1 = 9.2, with 3 distinct omissions.
-  await expect(rows.first().locator('.submission-score strong')).toHaveText('9.2');
+  // 30 independent units: omissions at 3/10/17/24; seven graded errors remain.
+  // Restore a/c after checking: 10 - 4*0.2 - 7*0.1 = 8.5.
+  await expect(rows.first().locator('.submission-score strong')).toHaveText('8.5');
   await page.getByRole('button',{name:'作业列表操作',exact:true}).click();
   const pendingDownload=page.waitForEvent('download');
   await page.getByRole('link',{name:'导出成绩',exact:true}).click();
   const download=await pendingDownload;const csvPath=join(dataDir,'grades.csv');await download.saveAs(csvPath);
   expect(download.suggestedFilename()).toBe('grades.csv');
-  expect(readFileSync(csvPath,'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"测试甲","9.2，漏3题"\r\n"测试乙","待确认"\r\n"测试同学","待确认"');
+  expect(readFileSync(csvPath,'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"测试甲","8.5，漏4题"\r\n"测试乙","待确认"\r\n"测试同学","待确认"');
   await rows.nth(1).getByRole('button',{name:'更多操作 测试乙'}).click();await page.getByRole('button',{name:'报告',exact:true}).click();await page.getByLabel('补充报告').fill('这是一份独立保存的人工反馈。');await page.getByRole('button',{name:'保存报告'}).click();
   await rows.nth(1).getByRole('button',{name:'更多操作 测试乙'}).click();await page.getByRole('button',{name:'重新模拟批改'}).click();await page.getByRole('button',{name:'开始模拟'}).click();
   await expect.poll(async()=>(await getState()).submissions[1].status).toBe('review');

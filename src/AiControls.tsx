@@ -69,7 +69,7 @@ export function AiControls({assignment,submissions,files,selectedIds,removedSele
     <label className="checkbox"><input type="checkbox" checked={consent} onChange={e=>setConsent(e.target.checked)}/>同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用</label>
     {regradeTargetId&&<Notice>本次为明确重新批改，可能产生新增费用；原记录保留在修订历史中。请重新核对目标、授权与预算。</Notice>}
     <details className="quiet-details" open={regradeTargetId?true:undefined}><summary>重新批改</summary><label className="checkbox"><input type="checkbox" checked={regrade} disabled={!!regradeTargetId} onChange={e=>{setRegrade(e.target.checked);setPreview(null);}}/>明确忽略已有结果缓存并重批（新增费用）</label></details>
-    <p className="subtle">本次 {ids.length} 份。目标每份低于 ¥0.10；预算是本机请求门禁，不能保证服务商最终账单绝对不超。</p>
+    <p className="subtle">预算用于本机请求拦截，不能保证服务商最终账单绝对不超。</p>
     {validPreview&&<Notice>已预估 {validPreview.items.length} 份 · 题目设置版本 {validPreview.configVersion} · 输出额度 {validPreview.maxOutputTokens}。保守估算合计 ¥{validPreview.estimatedCny.toFixed(4)}，其中 {validPreview.items.filter(i=>i.cached).length} 份可复用。估算含最大输出且不假设缓存命中。</Notice>}
     {validPreview?.warnings.map(w=><Notice key={w}>{w}</Notice>)}
     {validPreview?.warning&&<label className="checkbox"><input type="checkbox" checked={warning} onChange={e=>setWarning(e.target.checked)}/>估算达到 ¥0.30，我已查看预算并确认继续</label>}

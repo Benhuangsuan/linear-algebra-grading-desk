@@ -7,6 +7,8 @@ import { Modal, Notice, ActionMenu, useBeforeUnload, formatDate, statusNames } f
 import { UploadBox } from './FilesPanel';
 import {AiControls} from './AiControls';
 import {aiSelectionReason,isUngraded,reconcileSelection,type RemovedSelection} from '../shared/submission-state';
+import {splitUnits} from '../shared/questions';
+import {localGradingConfig} from '../shared/units';
 
 type Props={assignment:Assignment;submissions:Submission[];files:StoredFile[];onRefresh:()=>Promise<void>;onDirty:(v:boolean)=>void;onSetup:()=>void;mockEnabled:boolean};
 export function ReviewWorkspace({assignment,submissions,files,onRefresh,onDirty,onSetup,mockEnabled}:Props) {
@@ -54,7 +56,7 @@ export function ReviewWorkspace({assignment,submissions,files,onRefresh,onDirty,
     <div className="workspace-toolbar"><div className="search-field"><Search size={16}/><input aria-label="搜索学生" placeholder="搜索姓名或学号" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="toolbar"><select className="inline-select" aria-label="筛选状态" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">全部作业</option><option value="ungraded">未批改</option><option value="review">待确认</option><option value="confirmed">已确认</option><option value="failed">失败</option><option value="missing">漏做 −0.2</option><option value="needs">待核对项目</option></select>{mockEnabled&&<button disabled={!ready||assignment.archived||!submissions.some(s=>!['confirmed','queued','processing'].includes(s.status))} onClick={()=>setBatch(submissions.filter(s=>!['confirmed','queued','processing'].includes(s.status)))}><Play size={15}/>模拟批改</button>}<AiControls assignment={assignment} submissions={submissions} files={files} selectedIds={selection.valid} removedSelections={removedInfo} regradeTargetId={regradeId} onCloseRegrade={()=>setRegradeId(null)} onRetrySubmission={setRegradeId} onRefresh={onRefresh} onSetup={onSetup}/><UploadBox assignmentId={assignment.id} kind="student" onDone={onRefresh} disabled={assignment.archived}/><ActionMenu label="作业列表操作"><a href={`/api/assignments/${assignment.id}/export`}><Download size={15}/>导出成绩</a></ActionMenu></div></div>
     {error&&<Notice tone="danger">{error}</Notice>}
     {removedInfo.length>0&&<p className="selection-update" role="status">已移除：{removedInfo.map(r=>r.name+'（'+r.reason+'）').join('；')}。其他选择保留，请重新核对并预估。 <button className="text-button" onClick={()=>setRemoved([])}>知道了</button></p>}
-    {submissions.length>0&&<div className="selection-toolbar"><span>已选 {validSelected.size} 份</span><button className="text-button" onClick={()=>setSelected(old=>new Set([...old,...visible.filter(canSelect).map(s=>s.id)]))}>选择当前可批改项</button><button className="text-button" disabled={!validSelected.size} onClick={()=>setSelected(new Set())}>清空选择</button><small>选择会随批改进度更新；搜索或筛选不会清空选择。</small></div>}
+    {submissions.length>0&&<div className="selection-toolbar"><span>已选 {validSelected.size} 份</span><button className="text-button" onClick={()=>setSelected(old=>new Set([...old,...visible.filter(canSelect).map(s=>s.id)]))}>选择当前可批改项</button><button className="text-button" disabled={!validSelected.size} onClick={()=>setSelected(new Set())}>清空选择</button></div>}
     {!ready&&<div className="setup-reminder">人工评分和 AI 批改前，请先到作业设置核对并保存题目。<button className="text-button" onClick={onSetup}>前往作业设置</button></div>}
     <div className="submission-list"><div className="list-heading"><span>姓名 <small>{submissions.length}</small></span><span>总分</span><span>扣分点</span><span/></div>
       {visible.map(s=>{
@@ -75,18 +77,24 @@ export function ReviewWorkspace({assignment,submissions,files,onRefresh,onDirty,
       {!visible.length&&<div className="list-empty">{submissions.length?'没有匹配的学生作业。':'尚未上传学生作业。'}</div>}
     </div>
     {batch&&<Modal title={`模拟批改 ${batch.length} 份作业`} onClose={()=>setBatch(null)}><p>将生成用于演示的评分结果。{batch.some(s=>s.grade)?'当前未确认结果会保留在修订记录中。':''}</p><div className="modal-actions"><button onClick={()=>setBatch(null)}>取消</button><button className="primary" disabled={!batch.length||busy==='batch'} onClick={()=>void run(batch)}>开始模拟</button></div></Modal>}
-    {editing&&<ScoreEditor s={editing.s} file={fileFor(editing.s)!} initialKey={editing.key} onDirty={onDirty} onClose={()=>{setEditing(null);onDirty(false);}} onSaved={async()=>{setEditing(null);onDirty(false);await onRefresh();}}/>}
+    {editing&&<ScoreEditor key={editing.s.id+':'+editing.s.revision} assignment={assignment} s={editing.s} file={fileFor(editing.s)!} initialKey={editing.key} onDirty={onDirty} onClose={()=>{setEditing(null);onDirty(false);}} onRestart={async current=>{setEditing({s:current});onDirty(false);await onRefresh();}} onSaved={async()=>{setEditing(null);onDirty(false);await onRefresh();}}/>}
     {identity&&<IdentityModal s={identity} onClose={()=>setIdentity(null)} onSaved={async()=>{setIdentity(null);await onRefresh();}}/>}
     {report&&<ReportModal s={report} file={fileFor(report)!} onClose={()=>setReport(null)} onSaved={async()=>{setReport(null);await onRefresh();}}/>}
     {history&&<Modal title="修订记录" onClose={()=>setHistory(null)}>{history.length?history.map(h=><details className="history-item" key={h.id}><summary>{formatDate(h.at)} · {h.action}</summary><pre>{reportFor(h.snapshot)}</pre>{h.snapshot.manualReport&&<pre>{h.snapshot.manualReport}</pre>}</details>):<p>暂无修订记录。</p>}</Modal>}
   </div>;
 }
 
-function ScoreEditor({s,file,initialKey,onSaved,onClose,onDirty}:{s:Submission;file:StoredFile;initialKey?:string;onSaved:()=>Promise<void>;onClose:()=>void;onDirty:(v:boolean)=>void}) {
+function ScoreEditor({s,file,assignment,initialKey,onSaved,onRestart,onClose,onDirty}:{s:Submission;file:StoredFile;assignment:Assignment;initialKey?:string;onSaved:()=>Promise<void>;onRestart:(s:Submission)=>Promise<void>;onClose:()=>void;onDirty:(v:boolean)=>void}) {
   const grade=s.grade!;const config=grade.config;
   const [rows,setRows]=useState(structuredClone(s.review??grade.rows));
   const [key,setKey]=useState(initialKey&&config.questions.some(q=>questionKey(q)===initialKey)?initialKey:rows.find(r=>r.deduction===null)?.key??rows[0]?.key??'');
   const [dirty,setDirty]=useState(false);const [error,setError]=useState('');const [busy,setBusy]=useState(false);
+  const legacyParent=grade.config.questions.some(q=>splitUnits(q)||!q.part&&assignment.config.questions.some(p=>splitUnits(p)&&p.section===q.section&&p.number===q.number));
+  let restartError='';if(legacyParent)try{localGradingConfig(assignment.config);}catch(e){restartError=e instanceof Error?e.message:'请先核对当前题目设置。';}
+  async function restart(){
+    if(!window.confirm('按当前题目重新人工评分？本份作业的所有题目将重新录入，尚未保存的编辑会放弃；原评分和报告保留在修订记录，不会调用 AI。'))return;
+    setBusy(true);setError('');try{const next=await api<Submission>(`/submissions/${s.id}/manual`,'POST',{replace:true,revision:s.revision,expectedVersion:assignment.version});await onRestart(next);}catch(e){setError(e instanceof Error?e.message:'重新人工评分失败');}finally{setBusy(false);}
+  }
   useBeforeUnload(dirty);
   const index=rows.findIndex(r=>r.key===key);const row=rows[index];const q=config.questions.find(q=>questionKey(q)===key)!;
   function change(next:Judgment[]){setRows(next);setDirty(true);onDirty(true);}
@@ -101,8 +109,9 @@ function ScoreEditor({s,file,initialKey,onSaved,onClose,onDirty}:{s:Submission;f
   const selected=row.recognition==='found'?(row.verdict==='correct'||row.verdict==='completed'?'correct':'error'):row.recognition;
   const countLimit=q.part?1:Math.max(1,q.subparts?.length??0);
   return <Modal title={`修改评分 · ${s.studentName}`} onClose={close}>
+    {legacyParent&&<Notice><p>这份旧评分仍按整题记录，现有扣分不会自动拆分。需要分别核对小问时，可按当前题目重新人工评分；原记录保留在修订记录中。</p>{restartError?<p>{restartError}请先到作业设置核对并保存。</p>:<button disabled={busy} onClick={()=>void restart()}>按当前题目重新人工评分</button>}</Notice>}
     <div className="form-grid"><label className="wide">题目<select aria-label="选择题目" value={key} onChange={e=>setKey(e.target.value)}>{rows.map(r=><option value={r.key} key={r.key}>{r.key}{r.deduction?`（扣 ${r.deduction}）`:r.deduction===null?'（待核对）':''}</option>)}</select></label>
-      <label>判定<select aria-label="评分判定" value={selected} onChange={e=>state(e.target.value)}><option value="correct">{q.type==='completion_only'?'已完成':'正确 / 等价解'}</option>{q.type==='graded'&&<option value="error">有错误</option>}<option value="missing">未做</option><option value="not_found">未检索到，暂按漏做</option><option value="uncertain">需核对</option></select></label>
+      <label>判定<select aria-label="评分判定" value={selected} onChange={e=>state(e.target.value)}><option value="correct">{q.type==='completion_only'?'已完成':'正确 / 等价解'}</option>{q.type==='graded'&&<option value="error">做错 / 未完成</option>}<option value="missing">未做</option><option value="not_found">未检索到，暂按漏做</option><option value="uncertain">需核对</option></select></label>
       {config.policy==='linear-algebra-1.1'&&selected==='error'?<label>错误处数<input aria-label="错误处数" type="number" min={1} max={countLimit} value={row.errorCount??1} onChange={e=>{const count=Math.max(1,Math.min(countLimit,Number(e.target.value)||1));patch({errorCount:count,deduction:suggestedDeduction(config,q,row.recognition,row.verdict,count)});}}/></label>:<label>扣分<input aria-label="扣分" type="number" min={0} max={config.total} step="0.1" disabled={!!config.policy||selected!=='error'} value={row.deduction??''} onChange={e=>patch({deduction:e.target.value===''?null:Number(e.target.value)})}/></label>}
       <label className="wide">扣分原因<textarea aria-label="扣分原因" rows={3} value={row.reason} onChange={e=>patch({reason:e.target.value})}/></label>
       <label>证据页码（可选）<PagesInput key={key} value={row.pages} max={file.pages??1} onChange={pages=>patch({pages})}/></label><div className="current-deduction">本题扣分 <strong>{row.deduction??'待核对'}</strong></div>

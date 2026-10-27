@@ -35,7 +35,7 @@ try{
   await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await adopt();
   expect((await state()).assignments[0].config.questions).toHaveLength(0);await save();
   await page.locator('.question-disclosure>summary').click();await page.getByRole('button',{name:'调整 3.2 / 2',exact:true}).click();
-  await modal.getByLabel('特殊说明',{exact:true}).fill('Synthetic teacher note');await modal.getByLabel('每处错误扣分',{exact:true}).fill('0.3');
+  await modal.getByLabel('特殊说明',{exact:true}).fill('Synthetic teacher note');await modal.getByLabel('本单元错误扣分',{exact:true}).fill('0.3');
   await modal.getByRole('button',{name:'应用调整',exact:true}).click();await save();
   await upload('3.3 synthetic.pdf',ref33);await expect(review).toContainText('当前已有 1 道题');await expect(review).toContainText('7 道是新题');await expect(review).toContainText('3.3 synthetic.pdf（识别出 7 道题）');await adopt();await save();
   const f33=(await state()).files.find(f=>f.name==='3.3 synthetic.pdf')!,f32=(await state()).files.find(f=>f.name==='3.2 synthetic.pdf')!;

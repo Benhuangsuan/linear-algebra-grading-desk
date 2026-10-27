@@ -173,9 +173,13 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
   });
   app.post('/api/submissions/:id/manual',(req,res)=>{
     const s=submission(req.params.id);busy(s);if(s.status==='confirmed')fail(409,'请先重开审核');const a=assignment(s.assignmentId);
+    const b=z.object({replace:z.boolean().default(false),revision:z.number().int().optional(),expectedVersion:z.number().int().optional()}).parse(req.body??{});
+    if(b.replace&&(b.revision!==s.revision||b.expectedVersion!==a.version||a.archived))fail(409,'记录、题目设置已更新或作业已归档，请刷新并核对后再重新人工评分。');
     if(!a.config.confirmed||!a.config.questions.length)fail(400,'请先确认题目清单');
-    if(s.grade) return res.json(s);
-    const grade=manualGrade(a);res.json(save({...s,status:'review',grade,review:structuredClone(grade.rows)},'开始纯人工评分'));
+    if(s.grade&&!b.replace) return res.json(s);
+    let grade:ReturnType<typeof manualGrade>;try{grade=manualGrade(a);}catch(e){fail(400,e instanceof Error?e.message:'请先检查题目与扣分规则。');}
+    const next=store.transaction(()=>{if(b.replace)store.history(s,'按当前题目重新人工评分前保留原记录');return save({...s,status:'review',grade,review:structuredClone(grade.rows),error:''},b.replace?'明确按当前题目重新人工评分':'开始纯人工评分');});
+    res.json(next);
   });
   app.patch('/api/submissions/:id/identity',(req,res)=>{
     const s=submission(req.params.id);busy(s);
