@@ -3,10 +3,11 @@ import { ZodError } from 'zod';
 import { ChevronDown, Plus, Pencil, Trash2, Save } from 'lucide-react';
 import { blankQuestion, configSchema, questionKey, type Assignment, type Config, type Question, type StoredFile } from '../shared/domain';
 import { courseQuestion } from '../shared/course';
-import {childrenOf,withChildren,reconcileQuestions,splitUnits,childContentKey} from '../shared/questions';
+import {childrenOf,withChildren,reconcileQuestions,splitUnits,childContentKey,parentContentKey} from '../shared/questions';
 import { api } from './api';
 import { FilesPanel } from './FilesPanel';
 import { Modal, Notice, useBeforeUnload } from './components';
+import {ReferenceAssistant,ReferenceSources} from './ReferenceTools';
 
 export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assignment;files:StoredFile[];onSaved:()=>Promise<void>;onDirty:(v:boolean)=>void}) {
   const [draft,setDraft]=useState(structuredClone(assignment));const [dirty,setDirty]=useState(false);
@@ -14,13 +15,15 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
   const [warnings,setWarnings]=useState<string[]>([]);
   const [editing,setEditing]=useState<{index:number;q:Question}|null>(null);
   const [candidate,setCandidate]=useState<Config|null>(null);
+  const [strategy,setStrategy]=useState<'auto'|'black-red'|'text'>('auto');
+  const [assistant,setAssistant]=useState(false);
   const [replaceContent,setReplaceContent]=useState<Set<string>>(new Set());
   const [expanded,setExpanded]=useState<Set<string>>(new Set());
   const [prepared,setPrepared]=useState({scope:assignment.scope,text:assignment.config.sourceText??''});
   useBeforeUnload(dirty);
   function change(next:Assignment){setDraft(next);setDirty(true);onDirty(true);setMessage('');}
   async function prepare():Promise<Config>{
-    const result=await api<{config:Config;warnings:string[]}>(`/assignments/${assignment.id}/prepare`,'POST',{scope:draft.scope,sourceText:draft.config.sourceText??''});
+    const result=await api<{config:Config;warnings:string[]}>(`/assignments/${assignment.id}/prepare`,'POST',{scope:draft.scope,sourceText:draft.config.sourceText??'',strategy});
     setWarnings(result.warnings);
     return result.config;
   }
@@ -59,19 +62,21 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
     </section>
     <section className="settings-section"><div className="section-heading"><h2>题目清单 <span className="count">{draft.config.questions.length}</span></h2><button disabled={busy} onClick={()=>void generate()}>整理题目清单</button></div>
       {message&&<p className="save-message" role="status">{message}</p>}
-      {warnings.length>0&&<details className="quiet-details"><summary>{warnings.length} 份材料需要补充题号</summary>{warnings.map(w=><p key={w}>{w}</p>)}</details>}
+      <details className="quiet-details"><summary>解析选项</summary><label>参考答案解析策略<select value={strategy} onChange={e=>setStrategy(e.target.value as typeof strategy)}><option value="auto">自动检测黑红格式（须校对）</option><option value="black-red">本材料使用黑题干、红参考解</option><option value="text">仅按文本结构整理</option></select></label><p className="subtle">黑红约定仅用于本次整理；不符合此约定的材料请切换策略。扫描件和复杂页面仍须校对。</p><button disabled={busy||!files.some(f=>f.kind!=='student'&&f.mime==='application/pdf')} onClick={()=>setAssistant(true)}>按需视觉辅助整理…</button></details>
+      {warnings.length>0&&<details className="quiet-details"><summary>材料整理提示（{warnings.length}）</summary>{warnings.map(w=><p key={w}>{w}</p>)}</details>}
       <details className="question-disclosure"><summary><ChevronDown size={15}/>{draft.config.questions.length?'查看题目与调整个别规则':'补充题目清单'}</summary>
         {draft.config.questions.length>0&&<div className="question-table-scroll"><table className="question-table"><thead><tr><th>题目</th><th>检查方式</th><th>漏做扣分</th><th>错误扣分</th><th/></tr></thead><tbody>{draft.config.questions.map((q,i)=>{const key=questionKey(q);const children=childrenOf(q);return <Fragment key={key}><tr><td>{key}{children.length>0&&<button className="text-button child-disclosure" aria-label={`展开小问 ${key}`} aria-expanded={expanded.has(key)} onClick={()=>setExpanded(old=>{const next=new Set(old);next.has(key)?next.delete(key):next.add(key);return next;})}>{children.length} 小问 · {splitUnits(q)?children.length:1} 单元 <ChevronDown size={13}/></button>}</td><td>{q.type==='completion_only'?'仅检查完成':'批改正确性'}</td><td>{q.missingPenalty??'未设'}</td><td>{q.type==='completion_only'?'—':q.errorPenalty??'未设'}</td><td><div className="toolbar"><button className="icon-button" title={`调整 ${key}`} onClick={()=>setEditing({index:i,q:structuredClone(q)})}><Pencil size={14}/></button><button className="icon-button danger-text" title={`删除题目 ${key}`} onClick={()=>{if(window.confirm('删除大题及其小问？保存设置后生效，已有成绩不变。'))change({...draft,config:{...draft.config,confirmed:false,questions:draft.config.questions.filter((_,j)=>j!==i)}});}}><Trash2 size={14}/></button></div></td></tr>{expanded.has(key)&&children.map(child=><tr className="child-question-row" key={child.id}><td>↳ {child.label}</td><td colSpan={3}>{child.confirmed===false?'待核对':splitUnits(q)?'独立扣分单元':'随整题批改'}{splitUnits(q)&&child.missingPenalty!==undefined?' · 漏做 '+child.missingPenalty:''}{splitUnits(q)&&child.errorPenalty!==undefined?' · 错误 '+child.errorPenalty:''}</td><td><button className="text-button" onClick={()=>setEditing({index:i,q:structuredClone(q)})}>管理小问</button></td></tr>)}</Fragment>;})}</tbody></table></div>}
         <button className="text-button add-question" onClick={()=>setEditing({index:-1,q:courseQuestion({...blankQuestion(),number:'1'})})}><Plus size={14}/>添加题目</button>
         <label>补充题目或参考文字<textarea rows={4} placeholder={'例如：\n1.1: 7,11,19,34,36\n1.2: 13,26,35,36'} value={draft.config.sourceText??''} onChange={e=>change({...draft,config:{...draft.config,sourceText:e.target.value,confirmed:false}})}/></label>
       </details>
     </section>
-    {editing&&<QuestionModal q={editing.q} onClose={()=>setEditing(null)} onSave={q=>{const questions=[...draft.config.questions];if(editing.index<0)questions.push(q);else questions[editing.index]=q;change({...draft,config:{...draft.config,questions,confirmed:false}});setEditing(null);}}/>}
-    {candidate&&<Modal title="核对题目整理差异" onClose={()=>setCandidate(null)}><p>识别到 {candidate.questions.length} 道大题。默认仅补充新题与新小问，保留教师已有设置。同编号的小问内容可展开差异，单独选择替换到草稿；仍需核对并保存。</p><div className="candidate-list">{candidate.questions.map(q=>{const old=draft.config.questions.find(o=>questionKey(o)===questionKey(q));return <p key={questionKey(q)}><strong>{questionKey(q)}</strong>：{old?(childrenOf(old).map(c=>c.label).join('、')||'无小问'):'新增大题'} → {childrenOf(q).map(c=>c.label).join('、')||'整题'}{old&&childrenOf(old).some(c=>!childrenOf(q).some(p=>p.label===c.label))?'（已有小问保留）':''}</p>;})}{candidate.questions.flatMap(q=>childrenOf(q).map(child=>{const old=draft.config.questions.find(o=>questionKey(o)===questionKey(q));const prior=old&&childrenOf(old).find(c=>c.label===child.label);if(!prior||prior.prompt===child.prompt&&prior.answer===child.answer)return null;const key=childContentKey(q,child.label);return <details className="quiet-details" key={key}><summary>{questionKey(q)} / {child.label} 内容差异</summary><p>现有题干：{prior.prompt||'（空）'}</p><p>现有参考解：{prior.answer||'（空）'}</p><p>候选题干：{child.prompt||'（待人工补录）'}</p><p>候选参考解：{child.answer||'（待人工补录）'}</p>{child.parseWarning&&<p>{child.parseWarning}</p>}<label className="checkbox"><input type="checkbox" aria-label={'采用小问内容 '+questionKey(q)+' / '+child.label} checked={replaceContent.has(key)} onChange={e=>setReplaceContent(current=>{const next=new Set(current);e.target.checked?next.add(key):next.delete(key);return next;})}/>采用该小问候选内容（覆盖此项旧文字，扣分规则保留）</label></details>;}))}</div><div className="modal-actions"><button onClick={()=>{setPrepared({scope:draft.scope,text:draft.config.sourceText??''});setCandidate(null);setMessage('保留教师配置；保存设置后生效。');}}>保留教师配置</button><button className="primary" onClick={()=>{const merged=reconcileQuestions(draft.config,candidate,replaceContent);change({...draft,config:merged});setPrepared({scope:draft.scope,text:draft.config.sourceText??''});setCandidate(null);setMessage('候选已补入草稿，请展开小问核对并保存。');}}>补充候选到草稿</button></div></Modal>}
+    {editing&&<QuestionModal q={editing.q} files={files} onClose={()=>setEditing(null)} onSave={q=>{const questions=[...draft.config.questions];if(editing.index<0)questions.push(q);else questions[editing.index]=q;change({...draft,config:{...draft.config,questions,confirmed:false}});setEditing(null);}}/>}
+    {assistant&&<ReferenceAssistant assignment={assignment} files={files} scope={draft.scope} onClose={()=>setAssistant(false)} onCandidate={(config,w)=>{setWarnings(w);setReplaceContent(new Set());setCandidate(config);setAssistant(false);}}/>}
+    {candidate&&<Modal title="核对题目整理差异" onClose={()=>setCandidate(null)}><p>识别到 {candidate.questions.length} 道大题。默认仅补充新题与新小问，保留教师已有设置。同编号的小问内容可展开差异，单独选择替换到草稿；仍需核对并保存。</p><div className="candidate-list">{candidate.questions.map(q=>{const old=draft.config.questions.find(o=>questionKey(o)===questionKey(q));return <p key={questionKey(q)}><strong>{questionKey(q)}</strong>：{old?(childrenOf(old).map(c=>c.label).join('、')||'无小问'):'新增大题'} → {childrenOf(q).map(c=>c.label).join('、')||'整题'}{old&&childrenOf(old).some(c=>!childrenOf(q).some(p=>p.label===c.label))?'（已有小问保留）':''}</p>;})}{candidate.questions.map(q=>{const prior=draft.config.questions.find(o=>questionKey(o)===questionKey(q));if(!prior||prior.prompt===q.prompt&&prior.answer===q.answer&&JSON.stringify(prior.referenceSources)===JSON.stringify(q.referenceSources))return null;const key=parentContentKey(q);return <details className="quiet-details" key={key}><summary>{questionKey(q)} 大题内容与来源差异</summary><p>现有题干：{prior.prompt||'（空）'}</p><p>候选题干：{q.prompt||'（空）'}</p><p>现有参考解：{prior.answer||'（空）'}</p><p>候选参考解：{q.answer||'（空）'}</p><p>候选来源：{q.referenceSources?.map(s=>'第 '+s.page+' 页'+(s.graphic?'（含图形）':'')).join('、')||'无'}</p><label className="checkbox"><input type="checkbox" aria-label={'采用大题内容 '+questionKey(q)} checked={replaceContent.has(key)} onChange={e=>setReplaceContent(current=>{const next=new Set(current);e.target.checked?next.add(key):next.delete(key);return next;})}/>采用该大题候选文字与来源（保留评分规则和特殊说明）</label></details>;})}{candidate.questions.flatMap(q=>childrenOf(q).map(child=>{const old=draft.config.questions.find(o=>questionKey(o)===questionKey(q));const prior=old&&childrenOf(old).find(c=>c.label===child.label);if(!prior||prior.prompt===child.prompt&&prior.answer===child.answer)return null;const key=childContentKey(q,child.label);return <details className="quiet-details" key={key}><summary>{questionKey(q)} / {child.label} 内容差异</summary><p>现有题干：{prior.prompt||'（空）'}</p><p>现有参考解：{prior.answer||'（空）'}</p><p>候选题干：{child.prompt||'（待人工补录）'}</p><p>候选参考解：{child.answer||'（待人工补录）'}</p>{child.parseWarning&&<p>{child.parseWarning}</p>}<label className="checkbox"><input type="checkbox" aria-label={'采用小问内容 '+questionKey(q)+' / '+child.label} checked={replaceContent.has(key)} onChange={e=>setReplaceContent(current=>{const next=new Set(current);e.target.checked?next.add(key):next.delete(key);return next;})}/>采用该小问候选内容（覆盖此项旧文字，扣分规则保留）</label></details>;}))}</div><div className="modal-actions"><button onClick={()=>{setPrepared({scope:draft.scope,text:draft.config.sourceText??''});setCandidate(null);setMessage('保留教师配置；保存设置后生效。');}}>保留教师配置</button><button className="primary" onClick={()=>{const merged=reconcileQuestions(draft.config,candidate,replaceContent);change({...draft,config:merged});setPrepared({scope:draft.scope,text:draft.config.sourceText??''});setCandidate(null);setMessage('候选已补入草稿，请展开小问核对并保存。');}}>补充候选到草稿</button></div></Modal>}
   </div>;
 }
 
-function QuestionModal({q:original,onSave,onClose}:{q:Question;onSave:(q:Question)=>void;onClose:()=>void}) {
+function QuestionModal({q:original,files,onSave,onClose}:{q:Question;files:StoredFile[];onSave:(q:Question)=>void;onClose:()=>void}) {
   const [q,setQ]=useState(original);const [error,setError]=useState('');
   const [parts,setParts]=useState(childrenOf(original).map(c=>c.label).join(', '));
   const children=childrenOf(q);const num=(v:string)=>v===''?null:Number(v);
@@ -83,7 +88,7 @@ function QuestionModal({q:original,onSave,onClose}:{q:Question;onSave:(q:Questio
   }
   function move(index:number,offset:number){const next=[...children];[next[index],next[index+offset]]=[next[index+offset],next[index]];updateChildren(next);}
   return <Modal title="调整题目" onClose={onClose}><form onSubmit={e=>{
-    e.preventDefault();if(!q.section.trim()||!/^\d+$/.test(q.number)){setError('请填写小节和数字题号。');return;}
+    e.preventDefault();if(!q.section.trim()||!q.number.trim()){setError('请填写小节和题目标识（如 32、补充题1）。');return;}
     const result=configSchema.safeParse({total:10,mode:'deduction',principles:'',questions:[q],confirmed:false});
     if(!result.success){setError(result.error.issues.map(i=>i.message).join('；'));return;}onSave(q);
   }}>
@@ -107,15 +112,18 @@ function QuestionModal({q:original,onSave,onClose}:{q:Question;onSave:(q:Questio
         <details className="quiet-details"><summary>小问内容{splitUnits(q)?'与个别扣分':''}</summary>
           {child.parseWarning&&<Notice>{child.parseWarning}</Notice>}
           {child.sourceText&&<details className="quiet-details"><summary>原始提取片段</summary><pre>{child.sourceText}</pre></details>}
-          <label>小问题干（可选）<textarea rows={2} value={child.prompt??''} onChange={e=>editContent(child.id,'prompt',e.target.value)}/></label>
-          <label>小问参考解（可选）<textarea rows={3} value={child.answer??''} onChange={e=>editContent(child.id,'answer',e.target.value)}/></label>
+          <label>小问题干（可选）<textarea aria-label="小问题干（可选）" rows={2} value={child.prompt??''} onChange={e=>editContent(child.id,'prompt',e.target.value)}/></label>
+          <label>小问参考解（可选）<textarea aria-label="小问参考解（可选）" rows={3} value={child.answer??''} onChange={e=>editContent(child.id,'answer',e.target.value)}/></label>
           {splitUnits(q)&&<div className="form-grid">{(['missingPenalty','errorPenalty'] as const).map(field=><label key={field}>{field==='missingPenalty'?'小问漏做扣分':'小问错误扣分'}<input type="number" min="0" max="10" step=".1" placeholder={'继承 '+q[field]} value={child[field]??''} onChange={e=>updateChildren(children.map(c=>c.id===child.id?{...c,[field]:e.target.value===''?undefined:Number(e.target.value),confirmed:false}:c))}/></label>)}</div>}
         </details>
       </div>)}
       {children.length>0&&<label className="checkbox"><input type="checkbox" checked={children.every(c=>c.confirmed!==false)} onChange={e=>updateChildren(children.map(c=>({...c,confirmed:e.target.checked})))}/>已核对全部小问</label>}
     </section>}
     {q.part&&<p className="subtle">保留原有小问记录：{q.part}。新增小问请在所属大题下管理。</p>}
-    <label>特殊说明<textarea rows={2} value={q.notes} onChange={e=>setQ({...q,notes:e.target.value})}/></label><details className="quiet-details"><summary>题干与参考解</summary><label>题干<textarea rows={3} value={q.prompt} onChange={e=>setQ({...q,prompt:e.target.value})}/></label><label>参考解<textarea rows={4} value={q.answer} onChange={e=>setQ({...q,answer:e.target.value})}/></label></details>
+    {q.parseWarning&&<Notice>{q.parseWarning}</Notice>}
+    {q.referenceExcerpt&&<details className="quiet-details"><summary>未分类提取片段</summary><pre>{q.referenceExcerpt}</pre></details>}
+    <ReferenceSources value={q.referenceSources} files={files} onChange={referenceSources=>setQ({...q,referenceSources})}/>
+    <label>特殊说明<textarea aria-label="特殊说明" rows={2} value={q.notes} onChange={e=>setQ({...q,notes:e.target.value})}/></label><details className="quiet-details"><summary>题干与参考解</summary><label>题干<textarea aria-label="题干" rows={3} value={q.prompt} onChange={e=>setQ({...q,prompt:e.target.value})}/></label><label>参考解<textarea aria-label="参考解" rows={4} value={q.answer} onChange={e=>setQ({...q,answer:e.target.value})}/></label></details>
     {error&&<Notice tone="danger">{error}</Notice>}<div className="modal-actions"><button type="button" onClick={onClose}>取消</button><button className="primary">应用调整</button></div>
   </form></Modal>;
 }

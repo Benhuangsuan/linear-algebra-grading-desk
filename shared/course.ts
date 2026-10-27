@@ -1,5 +1,6 @@
 import { blankConfig, blankQuestion, questionKey, type Config, type Judgment, type Question } from './domain.js';
 import {extractChildren,withChildren,childrenOf} from './questions.js';
+import {questionHeading,supplementNotes} from './reference.js';
 
 export const COURSE_PRINCIPLES='满分 10 分。布置的奇数题仅检查完成，不因答案错误扣分；偶数题核对正确性。漏做整题扣 0.2 分，未检索到作答先按漏做处理；偶数题每处错误扣 0.1 分，整题漏做不重复计错误。判断题只看判断是否正确；解答题接受逻辑与结果均正确的不同方法和等价解。';
 export function courseQuestion(q:Question):Question {
@@ -42,11 +43,11 @@ export function parseCourseMaterials(texts:string[],scope:string):Question[] {
       if(!section)continue;
       const only=line.match(/题目\s*([\d,，、\s]+)/);
       if(only){flush();for(const number of only[1].replace(/(?<=\d)\s+(?=\d)/g,'').match(/\d+/g)??[])add(courseQuestion({...blankQuestion(),section,number}));continue;}
-      const numbered=line.match(/^(\d(?:\s*\d)*)\s*[.．、)）]\s*(.*)$/);
-      if(numbered&&!/^\d/.test(numbered[2])){flush();current={...blankQuestion(),section,number:numbered[1].replace(/\s/g,''),prompt:numbered[2],kind:/判断|对错|正误/.test(numbered[2])?'true_false':'solution'};continue;}
+      const numbered=questionHeading(line);
+      if(numbered){flush();current={...blankQuestion(),section,number:numbered.number,prompt:numbered.text,notes:supplementNotes(numbered.number),kind:/判断|对错|正误/.test(numbered.text)?'true_false':'solution'};continue;}
       if(current)answerLines.push(line);
     }
     flush();
   }
-  return [...found.values()].sort((a,b)=>a.section.localeCompare(b.section,undefined,{numeric:true})||Number(a.number)-Number(b.number));
+  return [...found.values()];
 }

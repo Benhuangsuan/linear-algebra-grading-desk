@@ -3,6 +3,9 @@ import mammoth from 'mammoth';
 import { PDFDocument } from 'pdf-lib';
 import { blankQuestion, type Question } from '../shared/domain.js';
 import { resolve } from 'node:path';
+import {extractReferenceLayout} from './reference-layout.js';
+import type {ReferenceLayout} from '../shared/reference.js';
+import {questionHeading} from '../shared/reference.js';
 export { inferIdentity } from './identity.js';
 
 export async function inspectFile(buffer:Buffer,name:string,student:boolean) {
@@ -14,7 +17,7 @@ export async function inspectFile(buffer:Buffer,name:string,student:boolean) {
     if (doc.isEncrypted) throw new Error('暂不接受加密 PDF，请先解除密码保护');
     const pages=doc.getPageCount();
     if(pages<1 || pages>100) throw new Error('每个 PDF 必须为 1～100 页');
-    let text='';let warning='';
+    let text='';let warning='';let referenceLayout:ReferenceLayout|undefined;
     if(!student){
       try {
         const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -24,7 +27,8 @@ export async function inspectFile(buffer:Buffer,name:string,student:boolean) {
         if(!text.trim())warning='这份 PDF 没有可提取的文字，请补充题目清单。';
       } catch(e){warning=`无法提取 PDF 文字，请补充题目清单。（${e instanceof Error?e.message:'解析失败'}）`;}
     }
-    return {ext:'.pdf',mime:'application/pdf',pages,text,warning};
+    if(!student)try{referenceLayout=await extractReferenceLayout(buffer);}catch{warning+=" 颜色与版面提取未完成，请对照原页人工校对或使用按需页面辅助整理。";}
+    return {ext:'.pdf',mime:'application/pdf',pages,text,warning,referenceLayout};
   }
   if (!student && /\.docx$/i.test(name)) {
     let zip:AdmZip;
@@ -55,6 +59,6 @@ export function suggestQuestions(text:string):Question[] {
   for(const number of numbers) rows.push({...blankQuestion(),section,number,type:'completion_only',errorPenalty:0});
   // Only the explicitly labelled reference section is parsed; parity is not a general rule.
   const graded=text.split(/偶数题答案[：:]/)[1]??'';
-  for(const m of graded.matchAll(/^\s*(\d+)[.．、]\s*(.+)/gm)) rows.push({...blankQuestion(),section,number:m[1],type:'graded',prompt:m[2].trim()});
+  for(const line of graded.split(/\r?\n/)){const heading=questionHeading(line.trim());if(heading)rows.push({...blankQuestion(),section,number:heading.number,type:'graded',prompt:heading.text});}
   return rows.filter((q,i,all)=>all.findIndex(x=>x.section===q.section&&x.number===q.number)===i);
 }

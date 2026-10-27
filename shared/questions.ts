@@ -28,6 +28,7 @@ export function extractChildren(text:string,kind:Question['kind']='solution'):Qu
   });
 }
 export function childContentKey(q:Question,label:string){return JSON.stringify([questionKey(q),label]);}
+export function parentContentKey(q:Question){return JSON.stringify([questionKey(q),'parent-content']);}
 
 /** Explicit additive reconciliation; teacher edits and manually added questions win. */
 export function reconcileQuestions(previous:Config,candidate:Config,replaceContent:ReadonlySet<string>=new Set()):Config {
@@ -35,11 +36,12 @@ export function reconcileQuestions(previous:Config,candidate:Config,replaceConte
   const questions=previous.questions.map(old=>{
     const parsed=remaining.get(questionKey(old));remaining.delete(questionKey(old));
     if(!parsed)return old;
+    const parent=replaceContent.has(parentContentKey(old))?{...old,prompt:parsed.prompt,answer:parsed.answer,referenceSources:parsed.referenceSources,parseMethod:parsed.parseMethod,parseWarning:parsed.parseWarning,referenceExcerpt:parsed.referenceExcerpt}:old;
     const children=childrenOf(old).map(child=>{
       const next=childrenOf(parsed).find(c=>c.label===child.label);
-      return next&&replaceContent.has(childContentKey(old,child.label))?{...child,prompt:next.prompt??'',answer:next.answer??'',sourceText:next.sourceText,parseWarning:next.parseWarning,confirmed:false}:child;
+      return next&&replaceContent.has(childContentKey(old,child.label))?{...child,prompt:next.prompt??'',answer:next.answer??'',sourceText:next.sourceText,parseWarning:next.parseWarning,referenceSources:next.referenceSources,confirmed:false}:child;
     });const labels=new Set(children.map(c=>c.label));
-    return withChildren(old,[...children,...childrenOf(parsed).filter(c=>!labels.has(c.label))]);
+    return withChildren(parent,[...children,...childrenOf(parsed).filter(c=>!labels.has(c.label))]);
   });
   return {...previous,questions:[...questions,...remaining.values()],confirmed:false};
 }

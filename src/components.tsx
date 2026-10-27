@@ -5,6 +5,7 @@ export const statusNames:Record<Submission['status'],string>={uploaded:'待处�
 export function Status({status}:{status:Submission['status']}){return <span className={`badge status-${status}`}><i/>{statusNames[status]}</span>;}
 export function Modal({title,children,onClose}:{title:string;children:ReactNode;onClose:()=>void}){
   const ref=useRef<HTMLElement>(null);const close=useRef(onClose);close.current=onClose;
+  const backdropPress=useRef(false);const backdropRelease=useRef(false);
   useEffect(()=>{
     const previous=document.activeElement;const overflow=document.body.style.overflow;document.body.style.overflow='hidden';
     ref.current?.querySelector<HTMLElement>('input:not([type=hidden]), textarea, select, button')?.focus();
@@ -14,7 +15,7 @@ export function Modal({title,children,onClose}:{title:string;children:ReactNode;
     };
     window.addEventListener('keydown',onKey);return()=>{window.removeEventListener('keydown',onKey);document.body.style.overflow=overflow;if(previous instanceof HTMLElement)previous.focus();};
   },[]);
-  return <div className="modal-backdrop" onClick={onClose}><section ref={ref} className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}><div className="modal-title"><h2>{title}</h2><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={20}/></button></div>{children}</section></div>;
+  return <div className="modal-backdrop" onPointerDown={e=>{backdropPress.current=e.target===e.currentTarget;backdropRelease.current=false;}} onPointerUp={e=>{backdropRelease.current=e.target===e.currentTarget;}} onPointerCancel={()=>{backdropPress.current=false;backdropRelease.current=false;}} onClick={e=>{if(e.target===e.currentTarget&&backdropPress.current&&backdropRelease.current)onClose();backdropPress.current=false;backdropRelease.current=false;}}><section ref={ref} className="modal" role="dialog" aria-modal="true" aria-label={title} onClick={e=>e.stopPropagation()}><div className="modal-title"><h2>{title}</h2><button className="icon-button" aria-label="关闭" onClick={onClose}><X size={20}/></button></div>{children}</section></div>;
 }
 export function Notice({children,tone='warning'}:{children:ReactNode;tone?:'warning'|'success'|'danger'|'info'}){return <div className={`notice ${tone}`}>{tone==='success'?<CheckCircle2 size={17}/>:<AlertCircle size={17}/>}<div>{children}</div></div>;}
 export function Empty({title,description,action}:{title:string;description:string;action?:()=>void}){return <div className="empty"><div className="empty-mark">∑</div><h2>{title}</h2><p>{description}</p>{action&&<button className="primary" onClick={action}><Plus size={17}/>开始创建</button>}</div>;}

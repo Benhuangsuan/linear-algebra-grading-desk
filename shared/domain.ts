@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import {referenceSourceSchema,type ReferenceLayout} from './reference.js';
 
 const score = z.number().finite().min(0).max(10000);
 export const childSchema = z.object({
@@ -6,6 +7,7 @@ export const childSchema = z.object({
   prompt:z.string().max(20000).optional(), answer:z.string().max(20000).optional(),
   sourceText:z.string().max(20000).optional(), parseWarning:z.string().max(1000).optional(),
   confirmed:z.boolean().optional(), missingPenalty:score.optional(), errorPenalty:score.optional(),
+  referenceSources:z.array(referenceSourceSchema).max(100).optional(),
 });
 export type QuestionChild = z.infer<typeof childSchema>;
 export const questionSchema = z.object({
@@ -21,6 +23,8 @@ export const questionSchema = z.object({
   parentKey:z.string().max(200).optional(), childId:z.string().max(150).optional(),
   referenceExcerpt:z.string().max(20000).optional(),
   unitMode: z.enum(['whole','independent']).optional(),
+  referenceSources:z.array(referenceSourceSchema).max(100).optional(),
+  parseWarning:z.string().max(1000).optional(),parseMethod:z.enum(['text','color','ai']).optional(),
 });
 export type Question = z.infer<typeof questionSchema>;
 export const configSchema = z.object({
@@ -72,7 +76,7 @@ export type Judgment = z.infer<typeof judgmentSchema>;
 export type Grade = { provider: 'mock' | 'manual' | 'deepseek' | 'qwen'; model: string; at: string; version: number; config: Config; rows: Judgment[]; raw: unknown };
 export type Course = { id: string; name: string; createdAt: string };
 export type Assignment = { id: string; courseId: string; title: string; description: string; scope: string; archived: boolean; version: number; config: Config; createdAt: string };
-export type StoredFile = { id: string; assignmentId: string; kind: 'student'|'reference'|'prompt'; name: string; diskName: string; mime: string; size: number; pages: number | null; createdAt: string; text: string; warning: string };
+export type StoredFile = { id: string; assignmentId: string; kind: 'student'|'reference'|'prompt'; name: string; diskName: string; mime: string; size: number; pages: number | null; createdAt: string; text: string; warning: string; referenceLayout?:ReferenceLayout };
 export type Submission = {
   id: string; assignmentId: string; fileId: string; studentName: string; studentId: string;
   status: 'uploaded'|'queued'|'processing'|'review'|'confirmed'|'failed';

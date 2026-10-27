@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFile, unlink, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { Store } from './store.js';
-import { inspectFile, normalizeFilename, inferIdentity, suggestQuestions } from './files.js';
+import { inspectFile, normalizeFilename, inferIdentity } from './files.js';
 import { MockProvider, manualGrade } from './provider.js';
 import { configSchema, judgmentSchema, validateRows, configurationWarnings, type Assignment, type Course, type Submission, type StoredFile, type History } from '../shared/domain.js';
 import {courseConfig,parseCourseMaterials} from '../shared/course.js';
@@ -14,6 +14,8 @@ import { gradesCsv } from './grades-export.js';
 import { AiService,type AiDependencies } from './ai/service.js';
 import {aiRoutes} from './ai/routes.js';
 import {AiError} from './ai/config.js';
+import {parseReferenceMaterials} from './reference-parser.js';
+import {renderPdf} from './ai/pdf.js';
 
 class HttpError extends Error {constructor(readonly status:number,message:string){super(message);}}
 function fail(status:number,message:string):never {throw new HttpError(status,message);}
@@ -67,7 +69,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     } finally {working=false;}
   }
   app.get('/api/state',(_req,res)=>res.json(store.state()));
-  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:'2.4.0',provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
+  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:'2.5.0',provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
   app.post('/api/courses',(req,res)=>{
     const {name}=z.object({name:z.string().trim().min(1).max(200)}).parse(req.body);
     const c:Course={id:randomUUID(),name,createdAt:now()};store.put('courses',c);res.status(201).json(c);
@@ -111,7 +113,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     let info:Awaited<ReturnType<typeof inspectFile>>;
     try {info=await inspectFile(file.buffer,name,kind==='student');}catch(e){fail(400,e instanceof Error?e.message:'文件无法读取');}
     const id=randomUUID();
-    const f:StoredFile={id,assignmentId:a.id,kind,name,diskName:id+info.ext,mime:info.mime,size:file.size,pages:info.pages,text:info.text,warning:info.warning,createdAt:now()};
+    const f:StoredFile={id,assignmentId:a.id,kind,name,diskName:id+info.ext,mime:info.mime,size:file.size,pages:info.pages,text:info.text,warning:info.warning,createdAt:now(),referenceLayout:info.referenceLayout};
     const path=join(store.uploads,f.diskName);await writeFile(path,file.buffer,{flag:'wx'});
     try {store.transaction(()=>{store.put('files',f);if(kind==='student')store.put('submissions',{id:randomUUID(),assignmentId:a.id,fileId:id,...inferIdentity(name),status:'uploaded',grade:null,review:null,manualReport:'',reportBase:'',error:'',revision:0,updatedAt:now()} satisfies Submission);});}
     catch(e){await unlink(path);throw e;}
@@ -124,24 +126,33 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     res.sendFile(resolve(store.uploads,f.diskName));
   });
   app.delete('/api/files/:id',async(req,res)=>{const f=store.get<StoredFile>('files',req.params.id)??fail(404,'文件不存在');const s=store.all<Submission>('submissions').find(s=>s.fileId===f.id);if(s)busy(s);store.delete('files',f.id);await removeFiles([f]);res.json({ok:true});});
+  app.get('/api/files/:id/pages/:page',async(req,res)=>{
+    const f=store.get<StoredFile>('files',req.params.id)??fail(404,'参考材料不存在');const page=Number(req.params.page);
+    if(f.kind==='student'||f.mime!=='application/pdf'||!/^[a-f0-9-]+\.pdf$/.test(f.diskName)||!Number.isInteger(page)||page<1||page>(f.pages??0))fail(400,'参考材料或来源页无效');
+    const images=await renderPdf(await readFile(join(store.uploads,f.diskName)),join(store.dir,'ai-cache'),undefined,{maxEdge:4096});
+    const image=images.find(p=>p.page===page)??fail(400,'来源页图像缺失，请对照原件人工检查');
+    res.type('image/jpeg').send(Buffer.from(image.data.split(',')[1],'base64'));
+  });
   app.get('/api/assignments/:id/parse-preview',(req,res)=>{
-    assignment(req.params.id);const files=store.all<StoredFile>('files').filter(f=>f.assignmentId===req.params.id&&f.kind!=='student');
-    res.json({questions:files.flatMap(f=>suggestQuestions(f.text)),warnings:['离线解析仅识别明确的题号段落，不识别 PDF 或数学公式；请核对、编辑后人工确认。',...files.map(f=>f.warning).filter(Boolean)]});
+    const a=assignment(req.params.id);const files=store.all<StoredFile>('files').filter(f=>f.assignmentId===req.params.id&&f.kind!=='student');
+    const parsed=parseReferenceMaterials(files,a.scope);res.json({questions:parsed.questions,warnings:['本地候选须对照原页校对，公式文本不能替代数学排版。',...parsed.warnings,...files.map(f=>f.warning).filter(Boolean)]});
   });
   app.post('/api/assignments/:id/prepare',async(req,res)=>{
-    const a=assignment(req.params.id);const b=z.object({scope:z.string().max(2000),sourceText:z.string().max(100000).default('')}).parse(req.body);
+    const a=assignment(req.params.id);const b=z.object({scope:z.string().max(2000),sourceText:z.string().max(100000).default(''),strategy:z.enum(['auto','black-red','text']).default('auto')}).parse(req.body);
     const files=store.all<StoredFile>('files').filter(f=>f.assignmentId===a.id&&f.kind!=='student');
     const texts:string[]=[];const warnings:string[]=[];
     for(let f of files){
-      if(!f.text&&f.mime==='application/pdf'&&/^[a-f0-9-]+\.pdf$/.test(f.diskName)){
+      if(!f.referenceLayout&&f.mime==='application/pdf'&&/^[a-f0-9-]+\.pdf$/.test(f.diskName)){
         const info=await inspectFile(await readFile(join(store.uploads,f.diskName)),f.name,false);
-        f={...f,text:info.text,warning:info.warning};store.put('files',f);
+        f={...f,text:info.text,warning:info.warning,referenceLayout:info.referenceLayout};store.put('files',f);
       }
       texts.push(f.text);if(!f.text.trim())warnings.push(`${f.name}：没有识别到题号，请补充清单。`);
     }
     try {
-      const questions=parseCourseMaterials([...texts,b.sourceText],b.scope);
-      res.json({config:{...courseConfig(questions),sourceText:b.sourceText},warnings});
+      const parsed=parseReferenceMaterials(files.map(f=>store.get<StoredFile>('files',f.id)!),b.scope,b.strategy);
+      const extra=parseCourseMaterials([b.sourceText],b.scope);
+      const questions=[...parsed.questions,...extra.filter(q=>!parsed.questions.some(p=>p.section===q.section&&p.number===q.number&&p.part===q.part))];
+      res.json({config:{...courseConfig(questions),sourceText:b.sourceText},warnings:[...warnings,...parsed.warnings]});
     }catch(e){fail(400,e instanceof Error?e.message:'题目清单生成失败');}
   });
   app.post('/api/assignments/:id/queue',(req,res)=>{

@@ -22,6 +22,6 @@ if(dev) {
   runtime.app.get('/{*path}',(_req,res)=>res.sendFile(resolve('dist/index.html')));
 }
 runtime.app.use(runtime.errorHandler);
-server.listen(port,'127.0.0.1',()=>console.log(`\n线代作业批改平台 2.4.0：http://127.0.0.1:${port}\n默认 Mock / 人工 · 数据保存在 ${runtime.store.dir}\n按 Ctrl+C 停止。\n`));
+server.listen(port,'127.0.0.1',()=>console.log(`\n线代作业批改平台 2.5.0：http://127.0.0.1:${port}\n默认 Mock / 人工 · 数据保存在 ${runtime.store.dir}\n按 Ctrl+C 停止。\n`));
 server.on('error',(e:NodeJS.ErrnoException)=>{console.error(e.code==='EADDRINUSE'?`端口 ${port} 已占用；关闭旧服务，或在 .env 中更改 PORT。`:e.message);process.exit(1);});
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{server.close();process.exit(0);});
