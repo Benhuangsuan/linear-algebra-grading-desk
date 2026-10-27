@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, useId } from 'react';
 import { Upload, FileText, Trash2, ExternalLink } from 'lucide-react';
 import type { StoredFile } from '../shared/domain';
 import { api, contentUrl } from './api';
@@ -6,6 +6,7 @@ import { Modal, Notice } from './components';
 
 export function UploadBox({assignmentId,kind,onDone,label,disabled=false}:{assignmentId:string;kind:StoredFile['kind'];onDone:(files?:StoredFile[])=>Promise<void>;label?:string;disabled?:boolean}) {
   const input=useRef<HTMLInputElement>(null);
+  const helpId=useId();
   const [busy,setBusy]=useState(false);const [progress,setProgress]=useState('');const [error,setError]=useState('');
   async function upload(files:FileList) {
     if(busy||disabled)return;
@@ -30,7 +31,8 @@ export function UploadBox({assignmentId,kind,onDone,label,disabled=false}:{assig
   }
   const caption=label??(kind==='student'?'上传作业':'添加文件');
   return <div className="upload-control" onDragOver={e=>e.preventDefault()} onDrop={e=>{e.preventDefault();void upload(e.dataTransfer.files);}}>
-    <button className={kind==='student'?'primary':''} disabled={busy||disabled} title="可多选或拖入文件，每份不超过 30 MB" onClick={()=>input.current?.click()}><Upload size={16}/>{busy?`上传中 ${progress}`:caption}</button>
+    <button className={kind==='student'?'primary':''} disabled={busy||disabled} aria-describedby={busy||disabled?helpId:undefined} title="可多选或拖入文件，每份不超过 30 MB" onClick={()=>input.current?.click()}><Upload size={16}/>{busy?`上传中 ${progress}`:caption}</button>
+    {(busy||disabled)&&<span id={helpId} className="control-hint">{busy?'正在上传，请等待完成。':'当前暂不能上传；归档作业请先取消归档，正在整理或保存时请等待完成。'}</span>}
     <input ref={input} hidden aria-label={caption} type="file" accept={kind==='student'?'.pdf':'.pdf,.docx'} multiple onChange={e=>{if(e.target.files)void upload(e.target.files);}}/>
     {error&&<div className="upload-error" role="alert">{error}<button className="text-button" onClick={()=>setError('')}>关闭</button></div>}
   </div>;

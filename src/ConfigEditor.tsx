@@ -38,8 +38,8 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
   }
   return <div className="setup-page">
     {error&&<Notice tone="danger">{error}</Notice>}
-    <div className="settings-section"><div className="section-heading"><h2>作业信息</h2><button className="primary" disabled={busy||helperBusy} onClick={()=>void save()}><Save size={15}/>{busy?'处理中…':'保存设置'}{dirty?' *':''}</button></div>
-      <p className={'settings-save-state'+(dirty?' unsaved':'')} role="status">{dirty?'存在尚未保存的更改，请点击“保存设置”。':'当前题目和规则已保存到本机。'}</p>
+    <div className="settings-section"><div className="section-heading"><h2>作业信息</h2><button className="primary" aria-describedby="settings-save-help" disabled={busy||helperBusy} onClick={()=>void save()}><Save size={15}/>{busy?'处理中…':'保存设置'}{dirty?' *':''}</button></div>
+      <p id="settings-save-help" className={'settings-save-state'+(dirty?' unsaved':'')} role="status">{busy||helperBusy?'正在整理或保存，请等待完成后再保存设置。':dirty?'存在尚未保存的更改，请点击“保存设置”。':'当前题目和规则已保存到本机。'}</p>
       <div className="form-grid"><label>作业名称<input disabled={busy||helperBusy} value={draft.title} maxLength={200} onChange={e=>change({...draft,title:e.target.value})}/></label><label>作业范围<input disabled={busy||helperBusy} placeholder="例如 1.1-1.3 或 2.2-2.4,2.8" value={draft.scope} onChange={e=>change({...draft,scope:e.target.value,config:{...draft.config,confirmed:false}})}/></label></div>
       <details className="quiet-details"><summary>补充说明</summary><textarea aria-label="作业说明" rows={3} value={draft.description} onChange={e=>change({...draft,description:e.target.value})}/></details>
     </div>

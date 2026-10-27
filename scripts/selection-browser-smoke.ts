@@ -13,7 +13,7 @@ import type {AiCall,AiBatch} from '../shared/ai.js';
 const dir=testDirectory('v2.2-selection-');
 const calls:string[]=[];const gates=new Map<string,Promise<void>>();const releases:(()=>void)[]=[];
 function hold(id:string){let release=()=>{};gates.set(id,new Promise<void>(r=>release=r));releases.push(release);return release;}
-const runtime=createApp(dir,{env:{AI_ALLOW_PAID:'true',DEEPSEEK_API_KEY:'fixture-credential'},fetcher:async(_url,init)=>{
+const runtime=createApp(dir,{env:{ENABLE_MOCK_UI:'true',AI_ALLOW_PAID:'true',DEEPSEEK_API_KEY:'fixture-credential'},fetcher:async(_url,init)=>{
   const body=JSON.parse(String(init?.body)) as {model:string;messages:{content:{text?:string}[]}[]};
   const id=body.messages[2].content[0].text!.match(/当前随机提交标识 ([a-f0-9-]+)/)![1];calls.push(id);await gates.get(id);
   const text=body.messages[1].content[0].text!;const data=JSON.parse(text.slice(text.indexOf('{'))) as {units:{key:string;type:string}[]};
@@ -28,10 +28,10 @@ async function request<T>(path:string,data?:unknown,method=data?'POST':'GET'):Pr
 const state=()=>request<State>('/state');
 const rows=page.getByTestId('submission-row');const row=(name:string)=>rows.filter({has:page.locator('.submission-name strong',{hasText:new RegExp('^'+name+'$')})});
 const dialog=page.getByRole('dialog');
-async function authorize(){await page.getByLabel('已核对本次扣分单元与规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();}
+async function authorize(){await page.getByLabel('已核对本次计分题目与扣分规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();}
 async function preview(count:number){await authorize();await page.getByRole('button',{name:'预估费用',exact:true}).click();await expect(dialog).toContainText('已预估 '+count+' 份');const warning=page.getByLabel('估算达到 ¥0.30，我已查看预算并确认继续');if(await warning.isVisible())await warning.check();}
 async function close(){await dialog.getByRole('button',{name:'关闭',exact:true}).last().click();}
-async function start(){await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(dialog).toContainText('已加入所选服务批次');}
+async function start(){await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(dialog).toContainText('已安排所选学生的批改');}
 async function focusSync(){await page.evaluate(()=>window.dispatchEvent(new Event('focus')));}
 async function done(id:string){await expect.poll(async()=>(await state()).submissions.find(s=>s.id===id)?.grade?.provider).toBe('deepseek');}
 const pdf=await PDFDocument.create();pdf.addPage([300,400]).drawText('Synthetic mathematics only',{x:20,y:350});const bytes=Buffer.from(await pdf.save());

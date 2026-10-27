@@ -12,7 +12,7 @@ const pdf=await PDFDocument.create();for(let i=0;i<3;i++)pdf.addPage([450,640]).
 const bytes=await pdf.save();
 const fixtures=['测试甲-2600010001.pdf','测试乙-2600010002.pdf','Re_9.9作业_测试同学（人工批改参考文件）.pdf'].map(name=>{const path=join(dataDir,name);writeFileSync(path,bytes);return path;});
 let proc:ChildProcess|undefined;
-async function start(){proc=spawn(process.execPath,['build/server/index.js'],{cwd:process.cwd(),env:{...process.env,AI_ALLOW_PAID:'false',DEEPSEEK_API_KEY:'',DASHSCOPE_API_KEY:'',PORT:String(port),DATA_DIR:dataDir,AI_PROVIDER:'mock'},windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';proc.stdout?.on('data',b=>logs+=String(b));proc.stderr?.on('data',b=>logs+=String(b));for(let i=0;i<100;i++){if(proc.exitCode!==null)throw new Error(logs);try{if((await fetch(url+'/api/health')).ok)return;}catch(e){if(i===99)throw e;}await new Promise(r=>setTimeout(r,100));}throw new Error(logs);}
+async function start(){proc=spawn(process.execPath,['build/server/index.js'],{cwd:process.cwd(),env:{...process.env,ENABLE_MOCK_UI:'true',AI_ALLOW_PAID:'false',DEEPSEEK_API_KEY:'',DASHSCOPE_API_KEY:'',PORT:String(port),DATA_DIR:dataDir,AI_PROVIDER:'mock'},windowsHide:true,stdio:['ignore','pipe','pipe']});let logs='';proc.stdout?.on('data',b=>logs+=String(b));proc.stderr?.on('data',b=>logs+=String(b));for(let i=0;i<100;i++){if(proc.exitCode!==null)throw new Error(logs);try{if((await fetch(url+'/api/health')).ok)return;}catch(e){if(i===99)throw e;}await new Promise(r=>setTimeout(r,100));}throw new Error(logs);}
 async function stop(){if(proc&&proc.exitCode===null){const child=proc;await new Promise<void>(done=>{child.once('exit',()=>done());child.kill();});}}
 const executable=process.env.BROWSER_PATH??['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'].find(existsSync);
 if(!executable)throw new Error('未找到 Chrome / Edge，请设置 BROWSER_PATH。');
@@ -56,7 +56,7 @@ try {
   await page.getByRole('link',{name:'导出成绩',exact:true}).click();
   const download=await pendingDownload;const csvPath=join(dataDir,'grades.csv');await download.saveAs(csvPath);
   expect(download.suggestedFilename()).toBe('grades.csv');
-  expect(readFileSync(csvPath,'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"测试甲","9.2分，漏3题"\r\n"测试乙","待确认"\r\n"测试同学","待确认"');
+  expect(readFileSync(csvPath,'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"测试甲","9.2，漏3题"\r\n"测试乙","待确认"\r\n"测试同学","待确认"');
   await rows.nth(1).getByRole('button',{name:'更多操作 测试乙'}).click();await page.getByRole('button',{name:'报告',exact:true}).click();await page.getByLabel('补充报告').fill('这是一份独立保存的人工反馈。');await page.getByRole('button',{name:'保存报告'}).click();
   await rows.nth(1).getByRole('button',{name:'更多操作 测试乙'}).click();await page.getByRole('button',{name:'重新模拟批改'}).click();await page.getByRole('button',{name:'开始模拟'}).click();
   await expect.poll(async()=>(await getState()).submissions[1].status).toBe('review');

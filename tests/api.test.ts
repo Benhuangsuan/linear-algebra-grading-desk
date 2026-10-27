@@ -10,7 +10,7 @@ import {blankQuestion,blankConfig,questionKey,type State,type Assignment,type Su
 
 test('本地闭环：上传、隔离失败重试、人工审核、版本保护、重启持久化与删除',async()=>{
   const dir=testDirectory('api-test-');
-  let runtime=createApp(dir);runtime.app.use(runtime.errorHandler);
+  let runtime=createApp(dir,{env:{ENABLE_MOCK_UI:'true'}});runtime.app.use(runtime.errorHandler);
   let server=runtime.app.listen(0,'127.0.0.1');await once(server,'listening');
   let base=`http://127.0.0.1:${(server.address() as {port:number}).port}/api`;
   async function request<T>(path:string,method='GET',body?:unknown,status=200):Promise<T>{const response=await fetch(base+path,{method,headers:body&&!(body instanceof FormData)?{'Content-Type':'application/json'}:undefined,body:body instanceof FormData?body:body?JSON.stringify(body):undefined});const data:unknown=await response.json();assert.equal(response.status,status,JSON.stringify(data));return data as T;}
@@ -51,8 +51,8 @@ test('本地闭环：上传、隔离失败重试、人工审核、版本保护�
     // Synthetic PDFs exercise file serving and manual-only startup without private attachments.
     for(const name of ['SyntheticGamma.pdf','SyntheticDelta.pdf']){const sample=await upload(name,bytes);assert.equal(sample.pages,3);const response=await fetch(base+`/files/${sample.id}/content`);assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'application/pdf');assert.equal((await response.arrayBuffer()).byteLength,sample.size);}
     const history=await request<unknown[]>(`/submissions/${s.id}/history`);assert.ok(history.length>=3);
-    const response=await fetch(base+`/assignments/${a.id}/export`);assert.equal(response.status,200);const csv=await response.text();assert.ok(csv.startsWith('"姓名","成绩"\r\n'));assert.ok(csv.includes('"测试同学","9.75分"'));assert.ok(csv.includes('"待确认"'));assert.ok(!csv.includes('学号'));assert.ok(!csv.includes('人工报告'));
-    await stop();runtime=createApp(dir);runtime.app.use(runtime.errorHandler);server=runtime.app.listen(0,'127.0.0.1');await once(server,'listening');base=`http://127.0.0.1:${(server.address() as {port:number}).port}/api`;
+    const response=await fetch(base+`/assignments/${a.id}/export`);assert.equal(response.status,200);const csv=await response.text();assert.ok(csv.startsWith('"姓名","成绩"\r\n'));assert.ok(csv.includes('"测试同学","9.75"'));assert.ok(csv.includes('"待确认"'));assert.ok(!csv.includes('学号'));assert.ok(!csv.includes('人工报告'));
+    await stop();runtime=createApp(dir,{env:{ENABLE_MOCK_UI:'true'}});runtime.app.use(runtime.errorHandler);server=runtime.app.listen(0,'127.0.0.1');await once(server,'listening');base=`http://127.0.0.1:${(server.address() as {port:number}).port}/api`;
     st=await request<State>('/state');const persisted=st.submissions.find(v=>v.id===s.id)!;assert.deepEqual(persisted.review,rows);assert.equal(persisted.manualReport,s.manualReport);assert.equal(persisted.status,'confirmed');
     const manualSubmission=st.submissions.find(v=>v.status==='uploaded')!;
     const manual=await request<Submission>(`/submissions/${manualSubmission.id}/manual`,'POST',{});assert.equal(manual.grade!.provider,'manual');

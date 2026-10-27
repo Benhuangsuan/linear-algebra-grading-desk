@@ -29,3 +29,27 @@
 .import-summary p:last-child{margin-bottom:0}
 .import-existing{padding:10px 0;border-top:1px solid #e5eddc}
 .candidate-list h3{font-size:14px;margin-top:16px}
+
+/* High-frequency controls share readable type; source fields override the generic sibling margin. */
+:root{--muted:#64725e}
+.tabs button,.course-link,.assignment-open,.workspace-toolbar button,.workspace-toolbar select,.search-field input{font-size:14px}
+.settings-section label,.modal label,.modal .form-grid label{font-size:14px;color:#485d41}
+.quiet-details>summary,.child-disclosure,.question-disclosure>.add-question{font-size:14px;color:#48623e}
+.reference-step>summary,.question-disclosure.reference-step>summary{font-size:15px}
+.modal input,.modal select,.modal textarea,.modal .form-grid input,.modal .form-grid select,.modal-actions button{font-size:14px}
+.modal .checkbox,.reference-sources .checkbox{font-size:13px;color:#52664a;align-items:flex-start;line-height:1.7}
+.checkbox input{flex-shrink:0;margin-top:3px}
+.modal .notice,.modal .quiet-details p,.settings-section .subtle,.settings-save-state{font-size:13px;line-height:1.8;color:#627457}
+.reference-add{margin-top:18px;padding-top:20px}.reference-sources h4{font-size:14px;color:#48623e}
+.reference-add>.subtle{margin:0 0 18px}.reference-add .form-grid{align-items:start;margin-bottom:18px}
+.reference-add .form-grid>label{margin:0;gap:8px}.reference-add .form-grid input,.reference-add .form-grid select{min-height:42px}
+.reference-add>.checkbox{margin:0 0 16px}.reference-source .toolbar,.reference-add .toolbar{gap:12px}
+.action-guidance{padding:14px 16px;border:1px solid #d5ad4b;border-left:4px solid #ad7b12;border-radius:6px;background:#fff8e6;color:#654b14;margin:18px 0}
+.action-guidance p{margin:8px 0;font-size:14px;line-height:1.7}.action-guidance summary{font-size:13px;cursor:pointer}.action-guidance button{margin-top:10px}
+.control-hint{display:block;max-width:270px;font-size:12px;white-space:normal;line-height:1.7;color:#654b14;margin-top:6px}
+.student-identity{display:flex;flex-direction:column;gap:4px;min-width:0}.student-id.text-button{display:block;text-align:left;font-size:12px;color:#52664a;overflow-wrap:anywhere}
+.mock-result{color:#86621d}.selection-toolbar small{color:#627457}.submission-score span{color:#69795e}
+@media(max-width:650px){.reference-add .form-grid{grid-template-columns:minmax(0,1fr)}.modal .form-grid label{font-size:14px}.modal .form-grid input,.modal .form-grid select{font-size:14px}.reference-add .toolbar{align-items:stretch;flex-direction:column}.workspace-toolbar>.toolbar{flex-wrap:wrap}.selection-toolbar button,.selection-toolbar small{font-size:12px}.list-heading{font-size:12px}.student-id.text-button{font-size:11px}.submission-name{flex-wrap:wrap}.student-identity{max-width:100%}.action-guidance p{font-size:13px}.row-actions .confirm-button{font-size:11px}}
+
+.question-table th,.question-table td{font-size:13px}.submission-name strong{font-size:15px}.row-actions .confirm-button,.deduction-toggle{font-size:13px}.modal button:not(.icon-button){font-size:14px}
+@media(max-width:650px){.question-table th,.question-table td{font-size:12px}.submission-name strong{font-size:13px}.student-id.text-button{font-size:12px}.row-actions .confirm-button{font-size:12px}.row-actions{flex-wrap:wrap;gap:5px}}

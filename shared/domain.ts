@@ -84,7 +84,7 @@ export type Submission = {
   error: string; revision: number; updatedAt: string;
 };
 export type History = { id: string; submissionId: string; action: string; at: string; snapshot: Submission };
-export type State = { courses: Course[]; assignments: Assignment[]; files: StoredFile[]; submissions: Submission[]; provider: string };
+export type State = { courses: Course[]; assignments: Assignment[]; files: StoredFile[]; submissions: Submission[]; provider: string; mockEnabled?:boolean };
 export function questionKey(q: Pick<Question,'section'|'number'|'part'>) { return `${q.section} / ${q.number}${q.part ? ` / ${q.part}` : ''}`; }
 export function blankQuestion(): Question { return { section:'1.1',number:'',part:'',type:'graded',required:true,maxPoints:null,missingPenalty:null,errorPenalty:null,partialCredit:'',notes:'',prompt:'',answer:'',disputed:false }; }
 export function blankConfig(): Config { return { total:10,mode:'deduction',principles:'',questions:[],confirmed:false }; }
@@ -146,12 +146,12 @@ export function summarize(config: Config, rows: Judgment[]) {
   return { score: unresolved ? null : value, provisional:value, unresolved, deduction:Math.round(deduction*100)/100 };
 }
 export function reportFor(s: Pick<Submission,'grade'|'review'|'status'>): string {
-  if (!s.grade) return '尚未开始批改。请使用 Mock 演示或进入纯人工评分。';
+  if (!s.grade) return '尚未开始批改。请进入人工评分，或配置 AI 后选择作业批改。';
   const {config,rows,provider}=s.grade;
   const ai=summarize(config,rows); const final=summarize(config,s.review??rows);
   const details=deductionRows(config,s.review??rows).filter(r=>r.deduction && r.deduction>0).map(r=>`${r.key}：扣 ${r.deduction} 分，${r.reason}`).join('\n');
   const pending=(s.review??rows).filter(r=>r.needsReview || !r.reviewed || r.deduction===null).length;
-  return `${provider==='mock'?'【Mock 演示，未识别或批改 PDF】':provider==='manual'?'【纯人工评分】':'【'+provider+' 视觉建议，需人工确认】'}\n满分：${config.total}\n${provider!=='manual'?`建议总分：${ai.score??'待确定'}`:'无 AI 建议'}\n人工最终总分：${s.status==='confirmed'?final.score:'待确认'}（当前草稿：${final.score??'待确定'}）\n${details||'暂无已确定的扣分条目。'}${pending?`\n需复核：${pending} 项。`:''}`;
+  return `${provider==='mock'?'【模拟评分，未识别或批改 PDF】':provider==='manual'?'【纯人工评分】':'【'+provider+' 视觉建议，需人工确认】'}\n满分：${config.total}\n${provider!=='manual'?`建议总分：${ai.score??'待确定'}`:'无 AI 建议'}\n人工最终总分：${s.status==='confirmed'?final.score:'待确认'}（当前未确认成绩：${final.score??'待确定'}）\n${details||'暂无已确定的扣分条目。'}${pending?`\n需复核：${pending} 项。`:''}`;
 }
 
 /** A whole question missing across several configured subparts is charged once. */

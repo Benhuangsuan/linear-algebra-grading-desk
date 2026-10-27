@@ -8,6 +8,7 @@ import { Modal, Notice, ActionMenu, useBeforeUnload } from './components';
 import { ConfigEditor } from './ConfigEditor';
 import { ReviewWorkspace } from './ReviewWorkspace';
 import './styles.css';
+import {APP_VERSION} from '../shared/version';
 
 const initial=new URLSearchParams(window.location.search);
 type Tab='students'|'settings';
@@ -38,9 +39,9 @@ function App(){
     <aside className="sidebar"><a className="brand" href="/" onClick={e=>{e.preventDefault();navigate(()=>setAssignmentId(''));}}><span className="brand-symbol">∑</span><strong>作业批改</strong></a>
       <div className="sidebar-section"><span>课程</span><button className="icon-button" aria-label="新增课程" onClick={()=>navigate(()=>{setAssignmentId('');setCourseModal('new');})}><Plus size={17}/></button></div>
       <nav aria-label="课程列表">{state?.courses.map(c=><button key={c.id} className={`course-link ${c.id===course?.id?'active':''}`} onClick={()=>navigate(()=>{setCourseId(c.id);setAssignmentId('');})}><BookOpen size={17}/><span>{c.name}</span></button>)}</nav>
-      <div className="sidebar-bottom"><button className="text-button" onClick={()=>setHelp(true)}><HelpCircle size={15}/>使用说明</button><span>2.6.0</span></div>
+      <div className="sidebar-bottom"><button className="text-button" onClick={()=>setHelp(true)}><HelpCircle size={15}/>使用说明</button><span>{APP_VERSION}</span></div>
     </aside>
-    <main><header className="topbar"><div className="breadcrumbs"><button onClick={()=>navigate(()=>setAssignmentId(''))}>{course?.name??'课程'}</button>{assignment&&<><ChevronRight size={14}/><span>{assignment.title}</span></>}</div><button className="mode-pill" onClick={()=>setHelp(true)}>Mock / AI</button></header>
+    <main><header className="topbar"><div className="breadcrumbs"><button onClick={()=>navigate(()=>setAssignmentId(''))}>{course?.name??'课程'}</button>{assignment&&<><ChevronRight size={14}/><span>{assignment.title}</span></>}</div>{state?.mockEnabled&&<button className="mode-pill" onClick={()=>setHelp(true)}>开发测试</button>}</header>
       {error&&<div className="connection-error"><Notice tone="danger">{error}<button className="text-button" onClick={()=>void refresh().catch(handleError)}>重试连接</button></Notice></div>}
       {!state?<div className="loading-state">{error?'本地服务未连接':'正在打开…'}</div>:!course?<div className="content"><div className="empty-state"><FolderOpen size={32}/><h1>创建第一门课程</h1><button className="primary" onClick={()=>setCourseModal('new')}><Plus size={16}/>创建课程</button></div></div>:!assignment?<div className="content course-page">
         <div className="page-heading"><h1>{course.name}</h1><div className="toolbar"><button className="primary" onClick={()=>setNewAssignment(true)}><Plus size={16}/>新建作业</button><ActionMenu label="课程操作"><button onClick={()=>setCourseModal(course)}>重命名课程</button><button className="danger-text" onClick={()=>void removeCourse()}>删除课程</button></ActionMenu></div></div>
@@ -50,12 +51,12 @@ function App(){
           {!assignments.filter(a=>showArchived||!a.archived).length&&<div className="list-empty">还没有作业，点击「新建作业」开始。</div>}
         </div>
       </div>:<><div className="assignment-header"><div className="page-heading"><div><h1>{assignment.title}</h1>{assignment.scope&&<p>{assignment.scope}</p>}</div><ActionMenu label="当前作业操作"><button onClick={()=>navigate(()=>void archive(assignment))}>{assignment.archived?'取消归档':'归档作业'}</button><button className="danger-text" onClick={()=>navigate(()=>void removeAssignment(assignment))}>删除作业</button></ActionMenu></div><nav className="tabs" aria-label="作业页面"><button className={tab==='students'?'active':''} onClick={()=>navigate(()=>setTab('students'))}>学生作业</button><button className={tab==='settings'?'active':''} onClick={()=>navigate(()=>setTab('settings'))}>作业设置</button></nav></div>
-        <div className="content assignment-content">{assignment.archived&&<Notice>作业已归档。需要继续批改时，请先取消归档。</Notice>}{tab==='students'?<ReviewWorkspace key={assignment.id} assignment={assignment} submissions={submissions} files={files} onRefresh={refresh} onDirty={setDirty} onSetup={()=>navigate(()=>setTab('settings'))}/>:<ConfigEditor key={`${assignment.id}:${assignment.version}`} assignment={assignment} files={files} onSaved={refresh} onDirty={setDirty}/>}</div>
+        <div className="content assignment-content">{assignment.archived&&<Notice>作业已归档。需要继续批改时，请先取消归档。</Notice>}{tab==='students'?<ReviewWorkspace key={assignment.id} assignment={assignment} submissions={submissions} files={files} onRefresh={refresh} onDirty={setDirty} mockEnabled={state?.mockEnabled??false} onSetup={()=>navigate(()=>setTab('settings'))}/>:<ConfigEditor key={`${assignment.id}:${assignment.version}`} assignment={assignment} files={files} onSaved={refresh} onDirty={setDirty}/>}</div>
       </>}
     </main>
     {courseModal&&<CourseModal course={courseModal} onClose={()=>setCourseModal(null)} onSaved={async id=>{setCourseModal(null);setCourseId(id);setAssignmentId('');await refresh();}}/>}
     {newAssignment&&course&&<AssignmentModal course={course} assignments={assignments} onClose={()=>setNewAssignment(false)} onSaved={async a=>{setNewAssignment(false);setAssignmentId(a.id);setTab('settings');await refresh();}}/>}
-    {help&&<Modal title="使用说明 · 2.6.0" onClose={()=>setHelp(false)}><p>先在作业设置中上传参考答案、保存题目清单，再上传学生作业并开始批改。</p><p>Mock 评分仅供演示；AI 批改需在弹窗主动选择服务、核对规则并同意传输。需要时可打开原稿、人工修改并确认成绩。</p><p>数据保存在本机的 data 文件夹。备份前先停止服务，再复制整个文件夹。完整操作步骤见项目 README.md。</p></Modal>}
+    {help&&<Modal title={"使用说明 · "+APP_VERSION} onClose={()=>setHelp(false)}><p>先在作业设置中上传参考答案、保存题目清单，再上传学生作业并开始批改。</p><p>可直接使用人工评分；AI 批改需先配置服务，再核对规则、确认页面隐私处理与费用。需要时可打开原稿、人工修改并确认成绩。</p><p>数据保存在本机的 data 文件夹。备份前先停止服务，再复制整个文件夹。完整操作步骤见项目 README.md。</p></Modal>}
   </div>;
 }
 

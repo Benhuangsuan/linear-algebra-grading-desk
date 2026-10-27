@@ -16,12 +16,14 @@ import {aiRoutes} from './ai/routes.js';
 import {AiError} from './ai/config.js';
 import {parseReferenceMaterials} from './reference-parser.js';
 import {renderPdf} from './ai/pdf.js';
+import {APP_VERSION} from '../shared/version.js';
 
 class HttpError extends Error {constructor(readonly status:number,message:string){super(message);}}
 function fail(status:number,message:string):never {throw new HttpError(status,message);}
 const now=()=>new Date().toISOString();
 export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
   const app=express();const store=new Store(dataDir);const provider=new MockProvider();
+  const mockEnabled=(aiDependencies.env??process.env).ENABLE_MOCK_UI==='true';
   let working=false;let closed=false;
   app.disable('x-powered-by');
   app.use((req,res,next)=>{
@@ -68,8 +70,8 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
       }
     } finally {working=false;}
   }
-  app.get('/api/state',(_req,res)=>res.json(store.state()));
-  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:'2.6.0',provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
+  app.get('/api/state',(_req,res)=>res.json({...store.state(),mockEnabled}));
+  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:APP_VERSION,provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
   app.post('/api/courses',(req,res)=>{
     const {name}=z.object({name:z.string().trim().min(1).max(200)}).parse(req.body);
     const c:Course={id:randomUUID(),name,createdAt:now()};store.put('courses',c);res.status(201).json(c);
@@ -92,6 +94,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
   app.put('/api/assignments/:id',(req,res)=>{
     const a=assignment(req.params.id);const b=z.object({title:z.string().trim().min(1).max(200),description:z.string().max(20000),scope:z.string().max(2000),config:configSchema,version:z.number().int(),regradeUnconfirmed:z.boolean().default(false)}).parse(req.body);
     if(b.version!==a.version)fail(409,'规则已被其他页面修改，请刷新后重新编辑');
+    if(b.regradeUnconfirmed&&!mockEnabled)fail(403,'模拟批改仅供开发测试，请使用人工评分或已授权的 AI 批改。');
     for(const q of b.config.questions)for(const source of [...(q.referenceSources??[]),...(q.children??[]).flatMap(c=>c.referenceSources??[])]){
       const f=store.get<StoredFile>('files',source.fileId);
       if(!f||f.assignmentId!==a.id||f.kind==='student'||f.mime!=='application/pdf'||source.page>(f.pages??0))fail(400,`${q.section} / ${q.number} 的参考页已失效或不属于本作业，请更换或移除后再保存。`);
@@ -161,6 +164,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     }catch(e){fail(400,e instanceof Error?e.message:'题目清单生成失败');}
   });
   app.post('/api/assignments/:id/queue',(req,res)=>{
+    if(!mockEnabled)fail(403,'模拟批改仅供开发测试，请使用人工评分或已授权的 AI 批改。');
     const a=assignment(req.params.id);const b=z.object({ids:z.array(z.string()).min(1).max(50),acknowledged:z.literal(true),replaceDraft:z.boolean().default(false)}).parse(req.body);
     if(a.archived)fail(409,'请先取消归档');if(!a.config.confirmed||!a.config.questions.length)fail(400,'请先人工确认题目清单');
     const selected=[...new Set(b.ids)].map(id=>submission(id));
@@ -173,7 +177,13 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     if(s.grade) return res.json(s);
     const grade=manualGrade(a);res.json(save({...s,status:'review',grade,review:structuredClone(grade.rows)},'开始纯人工评分'));
   });
-  app.patch('/api/submissions/:id/identity',(req,res)=>{const s=submission(req.params.id);busy(s);const b=z.object({studentName:z.string().trim().max(200),studentId:z.string().trim().max(100)}).parse(req.body);res.json(save({...s,...b},'修正学生信息'));});
+  app.patch('/api/submissions/:id/identity',(req,res)=>{
+    const s=submission(req.params.id);busy(s);
+    const b=z.object({studentName:z.string().trim().min(1,'请填写姓名').max(200),studentId:z.string().trim().max(100),revision:z.number().int().optional()}).parse(req.body);
+    if(b.revision!==undefined&&b.revision!==s.revision)fail(409,'学生信息已更新，请关闭窗口、刷新后重新编辑。');
+    if(b.studentId!==s.studentId&&b.studentId!==''&&!/^\d{10}$/.test(b.studentId))fail(400,'学号须为恰好 10 位数字，也可以留空；前导零会保留。');
+    res.json(save({...s,studentName:b.studentName,studentId:b.studentId},'修正学生信息'));
+  });
   app.put('/api/submissions/:id/review',(req,res)=>{
     const s=submission(req.params.id);busy(s);if(s.status==='confirmed')fail(409,'成绩已确认，请先重开审核');
     const b=z.object({revision:z.number().int(),rows:z.array(judgmentSchema).max(300),manualReport:z.string().max(50000),reportBase:z.string().max(50000),confirm:z.boolean()}).parse(req.body);

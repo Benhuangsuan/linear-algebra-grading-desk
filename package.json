@@ -1,6 +1,6 @@
 {
   "name": "linear-algebra-grading-desk",
-  "version": "2.6.0",
+  "version": "2.7.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "test:ai-browser": "tsx scripts/ai-browser-smoke.ts",
     "test:selection-browser": "tsx scripts/selection-browser-smoke.ts",
     "test:reliability-browser": "tsx scripts/reliability-browser-smoke.ts",
+    "test:assistant-usability": "tsx scripts/assistant-usability-browser.ts",
     "test:reference-workflow": "tsx scripts/reference-workflow-browser.ts",
     "test:reference-browser": "tsx scripts/reference-browser-smoke.ts",
     "test:pdf-recovery-browser": "tsx scripts/pdf-recovery-browser-smoke.ts",

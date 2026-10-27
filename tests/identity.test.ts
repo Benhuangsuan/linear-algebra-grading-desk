@@ -29,9 +29,9 @@ test('姓名识别排除回复前缀、日期、作业标签及参考备注，�
 
 test('作业次数只从明确前缀去除，姓名学号与英文数字不全局删改',()=>{
   for(const filename of ['线代作业5-测试甲.pdf','线代作业5 测试甲.pdf','线代作业 5 - 测试甲.pdf','Re: 线代作业5－测试甲（附件）.pdf','转发_2026-09-09_线代作业5　测试甲.pdf'])assert.deepEqual(inferIdentity(filename),{studentName:'测试甲',studentId:''},filename);
-  for(const filename of ['线代作业5-测试甲-23000001.pdf','线代作业5 测试甲 23000001.pdf','线代作业 5 - 测试甲 - 23000001.pdf'])assert.deepEqual(inferIdentity(filename),{studentName:'测试甲',studentId:'23000001'},filename);
+  for(const filename of ['线代作业5-测试甲-23000001.pdf','线代作业5 测试甲 23000001.pdf','线代作业 5 - 测试甲 - 23000001.pdf'])assert.deepEqual(inferIdentity(filename),{studentName:'测试甲',studentId:''},filename);
   assert.deepEqual(inferIdentity('线代作业10-测试乙.pdf'),{studentName:'测试乙',studentId:''});
-  assert.deepEqual(inferIdentity('John5 Smith-23000001.pdf'),{studentName:'John5 Smith',studentId:'23000001'});
+  assert.deepEqual(inferIdentity('John5 Smith-23000001.pdf'),{studentName:'John5 Smith',studentId:''});
   assert.equal(inferIdentity('线代作业5-测试甲-23000001-23000002.pdf').studentId,'');
   assert.equal(inferredNameCorrection('线代作业5-测试甲.pdf','5 测试甲'),'测试甲');
   assert.equal(inferredNameCorrection('线代作业5-测试甲.pdf','5 自定义名'),null);

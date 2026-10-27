@@ -14,7 +14,7 @@ import type {AiDependencies} from '../server/ai/service.js';
 
 async function harness(deps:AiDependencies){
   const dir=testDirectory('stage2-api-');
-  const runtime=createApp(dir,deps);runtime.app.use(runtime.errorHandler);
+  const runtime=createApp(dir,{...deps,env:{...deps.env,ENABLE_MOCK_UI:'true'}});runtime.app.use(runtime.errorHandler);
   const server=runtime.app.listen(0,'127.0.0.1');await once(server,'listening');
   const base='http://127.0.0.1:'+(server.address() as {port:number}).port+'/api';
   async function request<T>(path:string,body?:unknown,method=body?'POST':'GET',status=200):Promise<T>{

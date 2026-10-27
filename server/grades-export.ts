@@ -1,4 +1,4 @@
-import { questionKey, summarize, type Submission } from '../shared/domain.js';
+import { questionKey, summarize, deductionRows, type Submission } from '../shared/domain.js';
 
 export function gradeCell(submission:Submission):string {
   if(submission.status!=='confirmed'||!submission.grade)return '待确认';
@@ -7,12 +7,11 @@ export function gradeCell(submission:Submission):string {
   const score=summarize(config,rows).score;
   if(score===null)return '待确认';
   const missing=new Set<string>();
-  for(const q of config.questions) {
-    if(!q.required)continue;
-    const row=rows.find(r=>r.key===questionKey(q));
-    if(row&&(row.recognition==='missing'||row.recognition==='not_found'))missing.add(q.section+' / '+q.number);
+  for(const row of deductionRows(config,rows)) {
+    const questions=config.questions.filter(q=>questionKey(q)===row.key||(config.policy==='linear-algebra-1.1'&&q.section+' / '+q.number===row.key));
+    if(questions.some(q=>q.required)&&row.verdict==='missing'&&(row.deduction??0)>0&&(row.recognition==='missing'||row.recognition==='not_found'))missing.add(row.key);
   }
-  return score+'分'+(missing.size?'，漏'+missing.size+'题':'');
+  return score+(missing.size?'，漏'+missing.size+'题':'');
 }
 
 export function gradesCsv(submissions:Submission[]):string {

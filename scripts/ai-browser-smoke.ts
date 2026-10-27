@@ -49,9 +49,9 @@ try{
   await page.getByRole('button',{name:'AI 批改已选（1）',exact:true}).click();
   await expect(page.getByRole('dialog')).toContainText('deepseek-flash');
   await page.getByRole('button',{name:'测试连接',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('合成图片与 JSON 连接测试通过');
-  await page.getByLabel('已核对本次扣分单元与规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();
+  await page.getByLabel('已核对本次计分题目与扣分规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();
   await page.getByRole('button',{name:'预估费用',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('保守估算');
-  await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('已加入所选服务批次');
+  await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('已安排所选学生的批改');
   await page.getByRole('button',{name:'关闭',exact:true}).last().click();await expect(row.locator('.submission-score strong')).toHaveText('9.7');
   await expect(row).toContainText('DeepSeek');await row.getByRole('button',{name:/扣分点/}).click();await expect(row.locator('.deduction-item')).toHaveCount(2);
   await row.getByRole('button',{name:'确认成绩',exact:true}).click();await expect(page.getByText('仍有题目需要核对',{exact:false})).toBeVisible();
@@ -59,7 +59,7 @@ try{
   await expect(row.locator('.submission-score strong')).toHaveText('9.9');
   await row.getByRole('button',{name:'确认成绩',exact:true}).click();await expect(row).toHaveClass(/confirmed/);
   await page.getByRole('button',{name:'作业列表操作',exact:true}).click();const dl=page.waitForEvent('download');await page.getByRole('link',{name:'导出成绩',exact:true}).click();const download=await dl;await download.saveAs(join(dir,'grades.csv'));
-  expect(readFileSync(join(dir,'grades.csv'),'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"SynthAlpha","9.9分"');
+  expect(readFileSync(join(dir,'grades.csv'),'utf8')).toBe('\uFEFF"姓名","成绩"\r\n"SynthAlpha","9.9"');
   await page.reload();await expect(row).toHaveClass(/confirmed/);
   await expect(row.getByRole('checkbox')).toBeDisabled();
   expect(modelCalls).toBe(1);expect(connectionCalls).toBe(1);
@@ -119,7 +119,7 @@ try{
   await page.getByLabel('筛选状态').selectOption('all');await page.getByLabel('搜索学生').fill('');
   await rows.nth(3).getByRole('checkbox').uncheck();await expect(page.getByRole('button',{name:'AI 批改已选（1）',exact:true})).toBeVisible();await rows.nth(3).getByRole('checkbox').check();
   await page.getByRole('button',{name:'AI 批改已选（2）',exact:true}).click();await expect(page.locator('.selected-submissions p')).toHaveCount(2);await expect(page.locator('.selected-submissions')).toContainText(names[3]);await expect(page.locator('.selected-submissions')).not.toContainText(names[1]);
-  await page.getByLabel('已核对本次扣分单元与规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();
+  await page.getByLabel('已核对本次计分题目与扣分规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();
   await page.getByRole('button',{name:'预估费用',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('已预估 2 份');
   await page.getByRole('button',{name:'关闭',exact:true}).last().click();await page.getByRole('button',{name:'AI 批改已选（2）',exact:true}).click();await expect(page.getByRole('button',{name:'开始真实批改',exact:true})).toBeDisabled();
   await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();
@@ -129,7 +129,7 @@ try{
   await page.screenshot({path:join(dir,'v2.1-selection-dialog.png'),fullPage:true});
   const costWarning=page.getByLabel('估算达到 ¥0.30，我已查看预算并确认继续');if(await costWarning.isVisible())await costWarning.check();
   const oldCalls=modelCalls;
-  await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('已加入所选服务批次');
+  await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('已安排所选学生的批改');
   await expect.poll(async()=>(await request<State>('/state')).submissions.filter(s=>s.assignmentId===a.id&&s.status==='review').length,{timeout:20000}).toBe(2);
   await expect.poll(()=>modelCalls).toBe(oldCalls+2);
   const after=(await request<State>('/state')).submissions.filter(s=>s.assignmentId===a.id);

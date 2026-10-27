@@ -19,7 +19,7 @@ if(!denied)throw new Error('测试文件没有获得独占锁');
 if(!ignoreDevelopmentPath(process.cwd(),lockedPath)||!ignoreDevelopmentPath(process.cwd(),resolve('人工批改参考/作业批改参考答案/mso369B.tmp')))throw new Error('监听策略未排除 Word 临时文件');
 const expectedVersion=JSON.parse(readFileSync(resolve('package.json'),'utf8')).version as string;
 const port=3109;const url=`http://127.0.0.1:${port}`;
-const dev=spawn('cmd.exe',['/d','/s','/c','npm.cmd run dev'],{cwd:process.cwd(),env:{...process.env,AI_ALLOW_PAID:'false',DEEPSEEK_API_KEY:'',DASHSCOPE_API_KEY:'',PORT:String(port),DATA_DIR:join(folder,'data'),AI_PROVIDER:'mock'},windowsHide:true,stdio:['ignore','pipe','pipe']});
+const dev=spawn('cmd.exe',['/d','/s','/c','npm.cmd run dev'],{cwd:process.cwd(),env:{...process.env,ENABLE_MOCK_UI:'true',AI_ALLOW_PAID:'false',DEEPSEEK_API_KEY:'',DASHSCOPE_API_KEY:'',PORT:String(port),DATA_DIR:join(folder,'data'),AI_PROVIDER:'mock'},windowsHide:true,stdio:['ignore','pipe','pipe']});
 let logs='';dev.stdout?.on('data',b=>logs+=String(b));dev.stderr?.on('data',b=>logs+=String(b));
 const executable=process.env.BROWSER_PATH??['C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe','C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe'].find(existsSync);
 let browser:Awaited<ReturnType<typeof chromium.launch>>|undefined;
@@ -28,7 +28,7 @@ try{
   for(let i=0;i<120;i++){if(dev.exitCode!==null)throw new Error(logs);try{if((await fetch(url+'/api/health')).ok)break;}catch(e){if(i===119)throw e;}await new Promise(r=>setTimeout(r,100));}
   browser=await chromium.launch({executablePath:executable,headless:true});const page=await browser.newPage({viewport:{width:1400,height:950}});const errors:string[]=[];
   page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
-  await page.goto(url);await page.getByRole('button',{name:'新增课程'}).click();await page.getByLabel('课程名称').fill('开发稳定性测试');await page.getByRole('button',{name:'保存课程'}).click();
+  await page.goto(url);await expect(page).toHaveTitle('线代作业批改平台 '+expectedVersion);await page.getByRole('button',{name:'新增课程'}).click();await page.getByLabel('课程名称').fill('开发稳定性测试');await page.getByRole('button',{name:'保存课程'}).click();
   await page.getByRole('button',{name:'新建作业',exact:true}).click();await page.getByLabel('作业名称').fill('临时文件与刷新回归');await page.getByLabel('作业范围').fill('1.1-1.3');await page.getByRole('button',{name:'创建作业'}).click();
   await page.getByLabel('添加文件',{exact:true}).setInputFiles(referenceTexts.map((text,i)=>({name:`synthetic-${i+1}.docx`,mimeType:'application/vnd.openxmlformats-officedocument.wordprocessingml.document',buffer:syntheticDocx(text)})));
   await expect(page.getByRole('dialog',{name:'检查整理出的题目'})).toContainText('本次共整理出 19 道');await page.getByRole('button',{name:'添加新发现的题目（推荐）',exact:true}).click();await expect(page.getByRole('status')).toContainText('尚未保存');await page.getByRole('button',{name:'保存设置'}).click();await page.getByRole('button',{name:'学生作业',exact:true}).click();

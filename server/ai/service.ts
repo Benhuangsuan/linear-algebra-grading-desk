@@ -15,6 +15,7 @@ import {validateVision} from './validate.js';
 import {hasFormalResult} from '../../shared/submission-state.js';
 import {referenceParseOptions,referenceMessages,referenceCandidate} from './reference.js';
 import {parseScope} from '../../shared/course.js';
+import {gradingBlockers} from '../../shared/ai-readiness.js';
 
 type Cache={id:string;grade:Grade;at:string};
 type Prepared={assignment:Assignment;config:Config;student:PageImage[];references:{id:string;sourceFileId?:string;images:PageImage[]}[];key:string;bytes:Buffer;studentPages:number};
@@ -46,7 +47,9 @@ export class AiService {
   private async prepare(s:Submission,id:ProviderId,maxOutput?:number):Promise<Prepared>{
     const c=this.config(id);if(maxOutput!==undefined)c.maxOutput=maxOutput;const renderOptions={maxEdge:id==='deepseek'?4096:8192};
     const assignment=this.store.get<Assignment>('assignments',s.assignmentId);if(!assignment)throw new AiError('missing','作业不存在');
-    const config=unitConfig(assignment.config);const allFiles=this.store.all<StoredFile>('files').filter(f=>f.assignmentId===assignment.id);
+    const allFiles=this.store.all<StoredFile>('files').filter(f=>f.assignmentId===assignment.id);
+    const blocker=gradingBlockers(assignment,allFiles)[0];if(blocker)throw new AiError(blocker.code,blocker.message);
+    const config=unitConfig(assignment.config);
     const file=allFiles.find(f=>f.id===s.fileId);if(!file||!/^[a-f0-9-]+\.pdf$/.test(file.diskName))throw new AiError('file','学生 PDF 不存在');
     const references:Prepared['references']=[];const refHashes:string[]=[];const cacheRoot=join(this.store.dir,'ai-cache');
     for(const q of config.questions){

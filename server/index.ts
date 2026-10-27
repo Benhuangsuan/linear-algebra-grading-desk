@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import express from 'express';
 import { createServer } from 'node:http';
 import { createApp } from './app.js';
+import {APP_VERSION} from '../shared/version.js';
 
 if(existsSync('.env')) process.loadEnvFile('.env');
 if(process.env.AI_PROVIDER && process.env.AI_PROVIDER!=='mock') throw new Error('第 1 阶段仅支持 AI_PROVIDER=mock，不会调用付费 API。');
@@ -22,6 +23,6 @@ if(dev) {
   runtime.app.get('/{*path}',(_req,res)=>res.sendFile(resolve('dist/index.html')));
 }
 runtime.app.use(runtime.errorHandler);
-server.listen(port,'127.0.0.1',()=>console.log(`\n线代作业批改平台 2.6.0：http://127.0.0.1:${port}\n默认 Mock / 人工 · 数据保存在 ${runtime.store.dir}\n按 Ctrl+C 停止。\n`));
+server.listen(port,'127.0.0.1',()=>console.log(`\n线代作业批改平台 ${APP_VERSION}：http://127.0.0.1:${port}\n默认人工评分，AI 需单独配置和授权 · 数据保存在 ${runtime.store.dir}\n按 Ctrl+C 停止。\n`));
 server.on('error',(e:NodeJS.ErrnoException)=>{console.error(e.code==='EADDRINUSE'?`端口 ${port} 已占用；关闭旧服务，或在 .env 中更改 PORT。`:e.message);process.exit(1);});
 for(const signal of ['SIGINT','SIGTERM'] as const)process.on(signal,()=>{server.close();process.exit(0);});
