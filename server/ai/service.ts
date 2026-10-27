@@ -50,7 +50,7 @@ export class AiService {
     const file=allFiles.find(f=>f.id===s.fileId);if(!file||!/^[a-f0-9-]+\.pdf$/.test(file.diskName))throw new AiError('file','学生 PDF 不存在');
     const references:Prepared['references']=[];const refHashes:string[]=[];const cacheRoot=join(this.store.dir,'ai-cache');
     for(const q of config.questions){
-      if(/下图|如图|见图|图示|示意图/.test(q.prompt+'\n'+q.answer)&&!q.referenceSources?.some(s=>s.graphic))throw new AiError('reference_graphic',q.section+' / '+q.number+' 需要图形上下文，请在作业设置整理、校对来源页；未发送请求');
+      if(/下图|如图|见图|图示|示意图/.test(q.prompt+'\n'+q.answer)&&!q.referenceSources?.some(s=>s.graphic))throw new AiError('reference_graphic',q.section+' / '+q.number+' 需要参考答案中的图片。请在作业设置中添加并核对参考页，再开始批改；未发送请求');
       for(const source of q.referenceSources??[]){const f=allFiles.find(f=>f.id===source.fileId&&f.kind!=='student'&&f.mime==='application/pdf');if(!f||source.page>(f.pages??0))throw new AiError('reference_graphic','题目关联的参考页缺失或不属于当前作业，请重新整理并人工核对；未发送请求');}
     }
     for(const f of allFiles.filter(f=>f.kind!=='student')){
@@ -107,14 +107,14 @@ export class AiService {
   }
   private async referenceInput(assignmentId:string,body:unknown){
     const options=referenceParseOptions.parse(body);const c=this.requireConfig(options.provider);if(options.maxOutputTokens!==undefined)c.maxOutput=options.maxOutputTokens;
-    parseScope(options.scope);if(new Set(options.pages).size!==options.pages.length)throw new AiError('reference','来源页重复');
+    parseScope(options.scope);if(new Set(options.pages).size!==options.pages.length)throw new AiError('reference','PDF 页码有重复，请检查。');
     const assignment=this.store.get<Assignment>('assignments',assignmentId);
     if(!assignment||assignment.archived||assignment.version!==options.expectedVersion)throw new AiError('version','作业不存在、已归档或规则已变化，请刷新后重新预估');
     const f=this.store.get<StoredFile>('files',options.fileId);
-    if(!f||f.assignmentId!==assignmentId||f.kind==='student'||f.mime!=='application/pdf'||!/^[a-f0-9-]+\.pdf$/.test(f.diskName)||options.pages.some(p=>p>(f.pages??0)))throw new AiError('reference','请选择当前作业的有效参考 PDF 与来源页');
+    if(!f||f.assignmentId!==assignmentId||f.kind==='student'||f.mime!=='application/pdf'||!/^[a-f0-9-]+\.pdf$/.test(f.diskName)||options.pages.some(p=>p>(f.pages??0)))throw new AiError('reference','请选择本作业中的 PDF 参考答案，并填写有效页码。');
     const bytes=await readFile(join(this.store.uploads,f.diskName));
     const images=(await renderPdf(bytes,join(this.store.dir,'ai-cache'),undefined,{maxEdge:c.id==='deepseek'?4096:8192})).filter(p=>options.pages.includes(p.page));
-    if(options.pages.some(n=>!images.some(p=>p.page===n)))throw new AiError('reference_graphic','来源页图像缺失；未发送请求');
+    if(options.pages.some(n=>!images.some(p=>p.page===n)))throw new AiError('reference_graphic','所选 PDF 页面无法读取，未发送给 AI。请检查原文件。');
     const messages=referenceMessages(images,options.scope);assertRequestLimits(c,messages);
     const estimatedCny=cost(priceFor(c,0),estimateInput(c,messages),c.maxOutput);
     const previewToken=hash(JSON.stringify({assignmentId,version:assignment.version,file:hash(bytes),pages:options.pages,scope:options.scope,provider:c.id,model:c.model,price:priceFor(c,0),output:c.maxOutput,per:options.perSubmissionBudget,total:options.totalBudget,prompt:'reference-parser-v1',renderer:RENDER_VERSION}));
@@ -136,7 +136,7 @@ export class AiService {
       try{config=referenceCandidate(result.content,p.options.fileId,p.options.pages,p.options.scope);}
       catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:'reference_format',diagnostic:{...call.diagnostic,stage:'validation',validation:'rejected'}});throw e;}
       if(this.store.get<Assignment>('assignments',assignmentId)?.version!==p.assignment.version||!this.store.get<StoredFile>('files',p.options.fileId))throw new AiError('version','辅助整理期间规则或参考文件已变化；调用费用已保留，未覆盖任何配置，请刷新后人工检查');
-      return {config,callId:result.callId,warnings:['本次仅生成辅助候选，未修改已保存配置或成绩。请对照来源页、确认跨页完整性，再明确采用并保存。']};
+      return {config,callId:result.callId,warnings:['整理结果尚未加入题目清单，已保存的题目和成绩没有改变。请对照所选 PDF 页面检查，再决定添加或更新哪些内容，最后保存设置。']};
     }finally{this.referenceParsing=false;}
   }
   async preview(assignmentId:string,body:unknown){

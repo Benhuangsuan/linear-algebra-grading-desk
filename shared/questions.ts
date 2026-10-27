@@ -29,6 +29,14 @@ export function extractChildren(text:string,kind:Question['kind']='solution'):Qu
 }
 export function childContentKey(q:Question,label:string){return JSON.stringify([questionKey(q),label]);}
 export function parentContentKey(q:Question){return JSON.stringify([questionKey(q),'parent-content']);}
+export function questionContentChanged(a:Question,b:Question){return a.prompt!==b.prompt||a.answer!==b.answer||JSON.stringify(a.referenceSources??[])!==JSON.stringify(b.referenceSources??[]);}
+export function questionImportSummary(previous:Config,candidate:Config){
+  const old=new Map(previous.questions.map(q=>[questionKey(q),q]));
+  const added=candidate.questions.filter(q=>!old.has(questionKey(q)));
+  const existing=candidate.questions.filter(q=>old.has(questionKey(q)));
+  const newChildren=existing.flatMap(q=>childrenOf(q).filter(c=>!childrenOf(old.get(questionKey(q))!).some(p=>p.label===c.label)).map(c=>({parent:questionKey(q),label:c.label})));
+  return {current:previous.questions.length,found:candidate.questions.length,added,existing,newChildren};
+}
 
 /** Explicit additive reconciliation; teacher edits and manually added questions win. */
 export function reconcileQuestions(previous:Config,candidate:Config,replaceContent:ReadonlySet<string>=new Set()):Config {

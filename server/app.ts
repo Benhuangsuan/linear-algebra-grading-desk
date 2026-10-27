@@ -69,7 +69,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     } finally {working=false;}
   }
   app.get('/api/state',(_req,res)=>res.json(store.state()));
-  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:'2.5.0',provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
+  app.get('/api/health',(_req,res)=>{const attempts=store.all('ai_calls').length;res.json({ok:true,version:'2.6.0',provider:'mock',paidCalls:attempts?null:0,cloudAttempts:attempts,concurrency:1});});
   app.post('/api/courses',(req,res)=>{
     const {name}=z.object({name:z.string().trim().min(1).max(200)}).parse(req.body);
     const c:Course={id:randomUUID(),name,createdAt:now()};store.put('courses',c);res.status(201).json(c);
@@ -92,6 +92,10 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
   app.put('/api/assignments/:id',(req,res)=>{
     const a=assignment(req.params.id);const b=z.object({title:z.string().trim().min(1).max(200),description:z.string().max(20000),scope:z.string().max(2000),config:configSchema,version:z.number().int(),regradeUnconfirmed:z.boolean().default(false)}).parse(req.body);
     if(b.version!==a.version)fail(409,'规则已被其他页面修改，请刷新后重新编辑');
+    for(const q of b.config.questions)for(const source of [...(q.referenceSources??[]),...(q.children??[]).flatMap(c=>c.referenceSources??[])]){
+      const f=store.get<StoredFile>('files',source.fileId);
+      if(!f||f.assignmentId!==a.id||f.kind==='student'||f.mime!=='application/pdf'||source.page>(f.pages??0))fail(400,`${q.section} / ${q.number} 的参考页已失效或不属于本作业，请更换或移除后再保存。`);
+    }
     if(store.all<Submission>('submissions').some(s=>s.assignmentId===a.id&&['queued','processing'].includes(s.status)))fail(409,'请等待当前批改队列结束后修改规则');
     const changed=JSON.stringify(a.config)!==JSON.stringify(b.config);const updated={...a,...b,version:a.version+(changed?1:0)};
     store.transaction(()=>{store.put('assignments',updated);if(changed)store.put('versions',{id:`${a.id}:${updated.version}`,assignmentId:a.id,version:updated.version,config:b.config,at:now()});
@@ -149,10 +153,11 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
       texts.push(f.text);if(!f.text.trim())warnings.push(`${f.name}：没有识别到题号，请补充清单。`);
     }
     try {
-      const parsed=parseReferenceMaterials(files.map(f=>store.get<StoredFile>('files',f.id)!),b.scope,b.strategy);
+      const materials=files.map(f=>store.get<StoredFile>('files',f.id)!);const parsed=parseReferenceMaterials(materials,b.scope,b.strategy);
       const extra=parseCourseMaterials([b.sourceText],b.scope);
       const questions=[...parsed.questions,...extra.filter(q=>!parsed.questions.some(p=>p.section===q.section&&p.number===q.number&&p.part===q.part))];
-      res.json({config:{...courseConfig(questions),sourceText:b.sourceText},warnings:[...warnings,...parsed.warnings]});
+      const materialCounts=materials.map(f=>({fileId:f.id,name:f.name,questions:parseReferenceMaterials([f],b.scope,b.strategy).questions.length}));
+      res.json({config:{...courseConfig(questions),sourceText:b.sourceText},warnings:[...warnings,...parsed.warnings],materialCounts});
     }catch(e){fail(400,e instanceof Error?e.message:'题目清单生成失败');}
   });
   app.post('/api/assignments/:id/queue',(req,res)=>{

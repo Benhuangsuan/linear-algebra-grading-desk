@@ -81,9 +81,9 @@ try{
   await page.locator('.question-disclosure>summary').click();
   await expect(page.locator('.question-table tbody>tr:not(.child-question-row)')).toHaveCount(19);
   await page.getByRole('button',{name:'展开小问 1.3 / 24',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(4);
-  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('a、b、c、d → a、b、c、d、e');
-  await page.getByRole('button',{name:'保留教师配置',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(4);
-  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await page.getByRole('button',{name:'补充候选到草稿',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(5);
+  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await expect(page.getByRole('dialog')).toContainText('1.3 / 24 / e');
+  await page.getByRole('button',{name:'暂不添加，保持现有题目',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(4);
+  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await page.getByRole('button',{name:'添加新发现的题目（推荐）',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(5);
   await page.getByRole('button',{name:'调整 1.3 / 24',exact:true}).click();
   await expect(page.getByLabel('只配置某小问（可选）')).toHaveCount(0);
   await page.getByRole('button',{name:'添加小问',exact:true}).click();await expect(page.locator('.child-editor-item')).toHaveCount(6);
@@ -101,7 +101,7 @@ try{
   await expect.poll(async()=>(await request<State>('/state')).assignments.find(v=>v.id===a.id)?.version).toBe(3);
   a=(await request<State>('/state')).assignments.find(v=>v.id===a.id)!;
   const manualId=childrenOf(a.config.questions.find(q=>q.section==='1.3'&&q.number==='24')!).at(-1)!.id;
-  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await page.getByRole('button',{name:'补充候选到草稿',exact:true}).click();await page.getByRole('button',{name:'保存设置'}).click();
+  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await page.getByRole('button',{name:'暂不添加，保持现有题目',exact:true}).click();await page.getByRole('button',{name:'保存设置'}).click();
   await page.reload();await page.locator('.question-disclosure>summary').click();await page.getByRole('button',{name:'展开小问 1.3 / 24',exact:true}).click();await expect(page.locator('.child-question-row')).toHaveCount(5);
   a=(await request<State>('/state')).assignments.find(v=>v.id===a.id)!;
   expect(childrenOf(a.config.questions.find(q=>q.section==='1.3'&&q.number==='24')!).at(-1)!.id).toBe(manualId);expect(unitConfig(a.config).questions).toHaveLength(30);

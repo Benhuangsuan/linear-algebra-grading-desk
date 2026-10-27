@@ -36,7 +36,7 @@ export function UploadBox({assignmentId,kind,onDone,label,disabled=false}:{assig
   </div>;
 }
 
-export function FilesPanel({assignmentId,files,onRefresh,onUploaded,disabled}:{assignmentId:string;files:StoredFile[];onRefresh:()=>Promise<void>;onUploaded:()=>Promise<void>;disabled?:boolean}) {
+export function FilesPanel({assignmentId,files,onRefresh,onUploaded,disabled}:{assignmentId:string;files:StoredFile[];onRefresh:()=>Promise<void>;onUploaded:(files?:StoredFile[])=>Promise<void>;disabled?:boolean}) {
   const [kind,setKind]=useState<'reference'|'prompt'>('reference');const [preview,setPreview]=useState<StoredFile|null>(null);const [error,setError]=useState('');
   const materials=files.filter(f=>f.kind!=='student');
   async function remove(f:StoredFile){if(!window.confirm(`删除参考材料“${f.name}”？`))return;try{await api(`/files/${f.id}`,'DELETE');await onRefresh();}catch(e){setError(e instanceof Error?e.message:'删除失败');}}

@@ -3,7 +3,7 @@ import {courseQuestion,parseCourseMaterials,parseScope} from '../shared/course.j
 import {childrenOf,withChildren} from '../shared/questions.js';
 import {questionHeading,supplementNotes,type ReferenceLayout,type ReferencePage,type ReferenceSpan,type ReferenceSource} from '../shared/reference.js';
 
-type Material={id:string;text:string;referenceLayout?:ReferenceLayout};
+type Material={id:string;name?:string;text:string;referenceLayout?:ReferenceLayout};
 export type ParseStrategy='auto'|'black-red'|'text';
 function lines(page:ReferencePage){
   const rows:{y:number;spans:ReferenceSpan[]}[]=[];
@@ -29,13 +29,13 @@ export function parseReferenceMaterials(materials:Material[],scope:string,strate
     const spans=layout?.pages.flatMap(p=>p.spans)??[];
     const colored=strategy!=='text'&&spans.some(s=>s.color==='red')&&spans.some(s=>s.color==='black');
     if(!colored){
-      const fallback=parseCourseMaterials([file.text],scope).map(q=>({...q,parseMethod:'text' as const,parseWarning:'未采用黑题干/红参考解策略；请对照原文核对字段和层级。'}));
-      questions.push(...fallback);warnings.push('材料 '+file.id+'：采用文本结构回退，无法凭颜色区分题干与参考解。');
-      if(layout)for(const page of layout.pages)if(page.graphics.length)warnings.push('材料 '+file.id+' 第 '+page.page+' 页有图形但未可靠关联，请人工检查或使用页面辅助整理。');
+      const fallback=parseCourseMaterials([file.text],scope).map(q=>({...q,parseMethod:'text' as const,parseWarning:'这些内容按文字整理，题干、小问和参考答案需要你对照原页检查。'}));
+      questions.push(...fallback);warnings.push((file.name??'参考材料')+(strategy==='text'?'：已按你的选择只整理文字，请对照 PDF 核对题干与答案。':'：未找到能可靠区分题干和答案的颜色，已只按文字整理，请检查题目内容。'));
+      if(layout)for(const page of layout.pages)if(page.graphics.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页有图形但未可靠关联，请人工检查或使用页面辅助整理。');
       continue;
     }
     warnings.push(...layout!.warnings);
-    if(strategy==='auto')warnings.push('材料 '+file.id+'：检测到黑红文字，按黑题干/红参考解生成候选；请确认本材料确实采用此颜色约定。');
+    if(strategy==='auto')warnings.push((file.name??'参考材料')+'：已按黑色题干、红色答案整理。请确认材料确实采用这种颜色，并检查分离结果。');
     let section='',current:Question|undefined,child:QuestionChild|undefined;
     const flush=()=>{if(current&&(!allowed||allowed.has(current.section))){current.kind=/判断|对错|正误/.test(current.prompt)?'true_false':'solution';questions.push(courseQuestion(current));}current=undefined;child=undefined;};
     for(const page of layout!.pages){
@@ -72,7 +72,7 @@ export function parseReferenceMaterials(materials:Material[],scope:string,strate
         const graphic=page.graphics.some(g=>g.y+g.height>boundary.y&&g.y<bottom)||/下图|如图|见图|图示|示意图/.test(boundary.q.prompt)&&boundary.q.referenceSources?.some(s=>s.page===page.page&&s.fileId===file.id);
         if(graphic)source(boundary.q,file.id,page.page,true);
       }
-      if(page.graphics.length&&!boundaries.length)warnings.push('材料 '+file.id+' 第 '+page.page+' 页的图形尚未关联到题目，请人工核对。');
+      if(page.graphics.length&&!boundaries.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页的图形尚未关联到题目，请人工核对。');
     }
     flush();
   }

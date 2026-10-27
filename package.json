@@ -1,6 +1,6 @@
 {
   "name": "linear-algebra-grading-desk",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -17,6 +17,7 @@
     "test:ai-browser": "tsx scripts/ai-browser-smoke.ts",
     "test:selection-browser": "tsx scripts/selection-browser-smoke.ts",
     "test:reliability-browser": "tsx scripts/reliability-browser-smoke.ts",
+    "test:reference-workflow": "tsx scripts/reference-workflow-browser.ts",
     "test:reference-browser": "tsx scripts/reference-browser-smoke.ts",
     "test:pdf-recovery-browser": "tsx scripts/pdf-recovery-browser-smoke.ts",
     "benchmark:ai": "tsx scripts/ai-benchmark.ts"
@@ -27,7 +28,7 @@
     "express": "^5.1.0",
     "lucide-react": "^0.468.0",
     "mammoth": "^1.10.0",
-    "multer": "2.5.0",
+    "multer": "2.6.0",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "6.2.108",
     "react": "^19.1.0",

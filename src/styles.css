@@ -14,3 +14,18 @@
 .reference-page{display:block;max-width:100%;height:auto;border:1px solid var(--border,#ddd)}
 .reference-options{border:0;padding:0;min-width:0}
 .reference-source{margin:.75rem 0}
+.reference-step{border-top:1px solid #e5eddc;margin-top:16px;padding-top:4px}
+.reference-step>summary,.question-disclosure.reference-step>summary{display:list-item;list-style:disclosure-closed;font-size:14px;font-weight:600;color:#415c3d;padding:14px 0;margin:0;cursor:pointer}
+.reference-step[open]>summary{list-style:disclosure-open;margin-bottom:8px}
+.reference-step>label,.reference-step>.subtle{margin-bottom:14px}
+.reference-existing,.reference-add{padding:12px 0;border-top:1px solid #e5eddc}
+.reference-source{padding:10px 0}
+.reference-source .toolbar,.reference-add .toolbar{flex-wrap:wrap;margin-top:12px}
+.reference-sources h4,.import-existing h4{font-size:13px;margin:8px 0 12px}
+.settings-save-state{font-size:12px;color:#748568;margin-bottom:18px}
+.settings-save-state.unsaved{padding:10px 12px;border-left:3px solid #a88b3c;background:#faf7ec;color:#806c34}
+.reference-assistant>.modal-actions{flex-wrap:wrap}
+.import-summary{padding:12px 14px;background:#f1f5eb;border-radius:6px;margin-bottom:16px}
+.import-summary p:last-child{margin-bottom:0}
+.import-existing{padding:10px 0;border-top:1px solid #e5eddc}
+.candidate-list h3{font-size:14px;margin-top:16px}

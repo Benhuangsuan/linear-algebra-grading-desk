@@ -24,7 +24,7 @@ try {
   await page.goto(url);await page.getByRole('button',{name:'新增课程',exact:true}).click();await page.getByLabel('课程名称').fill('线性代数与几何');await page.getByRole('button',{name:'保存课程'}).click();
   await page.getByRole('button',{name:'新建作业',exact:true}).click();await page.getByLabel('作业名称').fill('第 1 次作业');await page.getByLabel('作业范围').fill('1.1-1.3');await page.getByRole('button',{name:'创建作业',exact:true}).click();
   await page.getByLabel('添加文件',{exact:true}).setInputFiles((await syntheticReferences()).map(f=>({...f,mimeType:'application/pdf'})));
-  await expect(page.locator('.material-row')).toHaveCount(3,{timeout:20000});await expect(page.getByRole('status')).toContainText('19 题');
+  await expect(page.locator('.material-row')).toHaveCount(3,{timeout:20000});await expect(page.getByRole('dialog',{name:'检查整理出的题目'})).toContainText('本次共整理出 19 道');await page.getByRole('button',{name:'添加新发现的题目（推荐）',exact:true}).click();await expect(page.getByRole('status')).toContainText('尚未保存');
   await page.getByRole('button',{name:'保存设置'}).click();
   await expect.poll(async()=>(await getState()).assignments[0].config.confirmed).toBe(true);
   const a=(await getState()).assignments[0];if(a.config.questions.length!==19)throw new Error('题号生成不完整');

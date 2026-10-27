@@ -23,12 +23,12 @@ export function referenceMessages(images:PageImage[],scope:string):Message[]{ret
   {role:'user',content:[{type:'text',text:'仅整理所选原页；作业范围为 '+scope+'。跨页不全时只整理可见内容并留空，不补全未见信息。'},...images.flatMap(p=>[{type:'text' as const,text:'参考材料原第 '+p.page+' 页'+(p.crop?'，区域 '+JSON.stringify(p.crop):'')},{type:'image_url' as const,image_url:{url:p.data,detail:'high' as const}}])]},
 ];}
 export function referenceCandidate(content:string,fileId:string,pages:number[],scope:string):Config {
-  let parsed:z.infer<typeof output>;try{parsed=output.parse(JSON.parse(content));}catch{throw new AiError('reference_format','辅助整理结果结构无效；未修改原题目，费用记录保留，请人工校对或明确重试');}
+  let parsed:z.infer<typeof output>;try{parsed=output.parse(JSON.parse(content));}catch{throw new AiError('reference_format','AI 没有返回可用的题目清单。原题目未改动，已产生的费用记录保留；请检查参考页，或重新预估后再试。');}
   const allowed=parseScope(scope);const keys=new Set<string>();
   const questions=parsed.questions.map(item=>{
-    if(allowed&&!allowed.has(item.section)||item.sources.some(s=>!pages.includes(s.page)))throw new AiError('reference_format','辅助整理返回范围外的题目或来源页，未采用结果；请人工检查');
-    const q=courseQuestion({...blankQuestion(),section:item.section,number:item.number,prompt:item.prompt,answer:item.answer,kind:item.kind,notes:supplementNotes(item.number),parseMethod:'ai',parseWarning:'视觉辅助候选，尚未人工校对；跨页内容可能不全，请核对原页与层级。',referenceSources:item.sources.map(s=>({...s,fileId})),subparts:item.children.map(c=>c.label)});
-    if(keys.has(questionKey(q))||new Set(item.children.map(c=>c.label)).size!==item.children.length)throw new AiError('reference_format','辅助整理返回重复大题或小问，未采用结果；请人工检查');
+    if(allowed&&!allowed.has(item.section)||item.sources.some(s=>!pages.includes(s.page)))throw new AiError('reference_format','AI 整理的题目或页码超出了你选择的范围，结果没有加入清单。请对照所选 PDF 页面检查。');
+    const q=courseQuestion({...blankQuestion(),section:item.section,number:item.number,prompt:item.prompt,answer:item.answer,kind:item.kind,notes:supplementNotes(item.number),parseMethod:'ai',parseWarning:'这些内容由 AI 整理，请核对题目、小问及参考页面；跨页内容可能不完整。',referenceSources:item.sources.map(s=>({...s,fileId})),subparts:item.children.map(c=>c.label)});
+    if(keys.has(questionKey(q))||new Set(item.children.map(c=>c.label)).size!==item.children.length)throw new AiError('reference_format','AI 重复列出了大题或小问，结果没有加入清单。请对照参考答案检查。');
     keys.add(questionKey(q));q.children=item.children.map(c=>({...c,id:questionKey(q)+':ai:'+c.label,confirmed:false,referenceSources:q.referenceSources}));return q;
   });
   return {...courseConfig(questions),confirmed:false};

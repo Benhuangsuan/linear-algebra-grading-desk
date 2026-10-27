@@ -38,7 +38,7 @@ function App(){
     <aside className="sidebar"><a className="brand" href="/" onClick={e=>{e.preventDefault();navigate(()=>setAssignmentId(''));}}><span className="brand-symbol">∑</span><strong>作业批改</strong></a>
       <div className="sidebar-section"><span>课程</span><button className="icon-button" aria-label="新增课程" onClick={()=>navigate(()=>{setAssignmentId('');setCourseModal('new');})}><Plus size={17}/></button></div>
       <nav aria-label="课程列表">{state?.courses.map(c=><button key={c.id} className={`course-link ${c.id===course?.id?'active':''}`} onClick={()=>navigate(()=>{setCourseId(c.id);setAssignmentId('');})}><BookOpen size={17}/><span>{c.name}</span></button>)}</nav>
-      <div className="sidebar-bottom"><button className="text-button" onClick={()=>setHelp(true)}><HelpCircle size={15}/>使用说明</button><span>2.5.0</span></div>
+      <div className="sidebar-bottom"><button className="text-button" onClick={()=>setHelp(true)}><HelpCircle size={15}/>使用说明</button><span>2.6.0</span></div>
     </aside>
     <main><header className="topbar"><div className="breadcrumbs"><button onClick={()=>navigate(()=>setAssignmentId(''))}>{course?.name??'课程'}</button>{assignment&&<><ChevronRight size={14}/><span>{assignment.title}</span></>}</div><button className="mode-pill" onClick={()=>setHelp(true)}>Mock / AI</button></header>
       {error&&<div className="connection-error"><Notice tone="danger">{error}<button className="text-button" onClick={()=>void refresh().catch(handleError)}>重试连接</button></Notice></div>}
@@ -55,7 +55,7 @@ function App(){
     </main>
     {courseModal&&<CourseModal course={courseModal} onClose={()=>setCourseModal(null)} onSaved={async id=>{setCourseModal(null);setCourseId(id);setAssignmentId('');await refresh();}}/>}
     {newAssignment&&course&&<AssignmentModal course={course} assignments={assignments} onClose={()=>setNewAssignment(false)} onSaved={async a=>{setNewAssignment(false);setAssignmentId(a.id);setTab('settings');await refresh();}}/>}
-    {help&&<Modal title="使用说明 · 2.5.0" onClose={()=>setHelp(false)}><p>先在作业设置中上传参考答案、保存题目清单，再上传学生作业并开始批改。</p><p>Mock 评分仅供演示；AI 批改需在弹窗主动选择服务、核对规则并同意传输。需要时可打开原稿、人工修改并确认成绩。</p><p>数据保存在本机的 data 文件夹。备份前先停止服务，再复制整个文件夹。完整操作步骤见项目 README.md。</p></Modal>}
+    {help&&<Modal title="使用说明 · 2.6.0" onClose={()=>setHelp(false)}><p>先在作业设置中上传参考答案、保存题目清单，再上传学生作业并开始批改。</p><p>Mock 评分仅供演示；AI 批改需在弹窗主动选择服务、核对规则并同意传输。需要时可打开原稿、人工修改并确认成绩。</p><p>数据保存在本机的 data 文件夹。备份前先停止服务，再复制整个文件夹。完整操作步骤见项目 README.md。</p></Modal>}
   </div>;
 }
 
