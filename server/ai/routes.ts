@@ -10,6 +10,10 @@ export function aiRoutes(service:AiService){
     res.json(await service.connection(providerId.parse(req.params.id)));
   });
   router.post('/assignments/:id/ai/preview',async(req,res)=>res.json(await service.preview(String(req.params.id),req.body)));
+  router.post('/assignments/:id/reference-ai/batch-preview',async(req,res)=>res.json(await service.referenceBatchPreview(String(req.params.id),req.body)));
+  router.post('/assignments/:id/reference-ai/tasks',async(req,res)=>res.json(await service.startReferenceTask(String(req.params.id),req.body)));
+  router.get('/assignments/:id/reference-ai/tasks/latest',(req,res)=>res.json(service.referenceTask(String(req.params.id))));
+  router.post('/assignments/:id/reference-ai/tasks/:taskId/cancel',(req,res)=>res.json(service.cancelReferenceTask(String(req.params.id),String(req.params.taskId))));
   router.post('/assignments/:id/reference-ai/preview',async(req,res)=>res.json(await service.referencePreview(String(req.params.id),req.body)));
   router.post('/assignments/:id/reference-ai/parse',async(req,res)=>res.json(await service.referenceParse(String(req.params.id),req.body)));
   router.post('/assignments/:id/ai/queue',async(req,res)=>res.json(await service.enqueue(String(req.params.id),req.body)));

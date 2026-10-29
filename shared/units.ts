@@ -13,6 +13,7 @@ export function unitConfig(config:Config):Config {
   if(!config.confirmed)throw new Error('请先确认作业规则');
   if(config.mode!=='deduction')throw new Error('真实批改当前使用扣分模式，请先明确题目扣分规则');
   const questions=config.questions.flatMap(q=>{
+    if(q.typeConfirmed===false)throw new Error(questionKey(q)+' 的检查方式尚未确认，请在作业设置核对。');
     if(q.missingPenalty===null||(q.type==='graded'&&q.errorPenalty===null))throw new Error(questionKey(q)+' 缺少明确扣分规则');
     // Completion attempts always count as one whole question, even with a partial answer.
     const split=splitUnits(q);const children=childrenOf(q);

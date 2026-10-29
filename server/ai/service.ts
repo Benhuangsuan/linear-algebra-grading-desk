@@ -14,6 +14,10 @@ import {estimateInput,cost,accounting,committed} from './budget.js';
 import {validateVision} from './validate.js';
 import {hasFormalResult} from '../../shared/submission-state.js';
 import {referenceParseOptions,referenceMessages,referenceCandidate} from './reference.js';
+import {referenceBatchOptions,referenceBatchMessages,referenceBatchCandidate,checkReferenceCompleteness,mergeReferenceQuestions,personalInformation} from './reference-batch.js';
+import {courseConfig} from '../../shared/course.js';
+import type {ReferenceTask} from '../../shared/reference-task.js';
+import type {Question} from '../../shared/domain.js';
 import {gradingBlockers} from '../../shared/ai-readiness.js';
 
 type Cache={id:string;grade:Grade;at:string};
@@ -28,7 +32,9 @@ export class AiService {
   private connections=new Map<ProviderId,string>();
   private connecting=new Set<ProviderId>();
   private referenceParsing=false;
+  private referenceController:AbortController|undefined;
   constructor(private store:Store,private save:Save,private deps:AiDependencies={}){
+    for(const t of store.all<ReferenceTask>('reference_tasks').filter(t=>t.status==='running'))store.putAi('reference_tasks',{...t,status:'interrupted',error:'上次退出时识别未完成，没有自动续发收费请求；请检查已完成部分和费用，再重新预估。'});
     for(const b of store.all<AiBatch>('ai_batches').filter(b=>b.status==='running')){
       b.status='paused';b.updatedAt=new Date().toISOString();
       b.items=b.items.map(i=>i.state==='processing'?{...i,state:'queued',error:'服务退出中断；未重发未知用量请求'}:i);
@@ -140,6 +146,66 @@ export class AiService {
       if(this.store.get<Assignment>('assignments',assignmentId)?.version!==p.assignment.version||!this.store.get<StoredFile>('files',p.options.fileId))throw new AiError('version','辅助整理期间规则或参考文件已变化；调用费用已保留，未覆盖任何配置，请刷新后人工检查');
       return {config,callId:result.callId,warnings:['整理结果尚未加入题目清单，已保存的题目和成绩没有改变。请对照所选 PDF 页面检查，再决定添加或更新哪些内容，最后保存设置。']};
     }finally{this.referenceParsing=false;}
+  }
+  private async prepareReferenceBatch(assignmentId:string,body:unknown){
+    const options=referenceBatchOptions.parse(body),c=this.requireConfig(options.provider);c.retries=0;c.maxOutput=32768;
+    const a=this.store.get<Assignment>('assignments',assignmentId);
+    if(!a||a.archived||a.version!==options.expectedVersion)throw new AiError('version','作业规则已变化或作业已归档，请刷新后重新预估。');
+    if(new Set(options.fileIds).size!==options.fileIds.length)throw new AiError('reference','参考文件选择重复。');
+    const plans:{file:StoredFile;pages:number[];messages:Message[];estimatedCny:number}[]=[];const bindings:unknown[]=[];
+    for(const id of options.fileIds){
+      const f=this.store.get<StoredFile>('files',id);
+      if(!f||f.assignmentId!==a.id||f.kind==='student'||f.mime!=='application/pdf'||!/^[a-f0-9-]+\.pdf$/.test(f.diskName)||!f.pages)throw new AiError('reference','请选择当前作业中有效的参考PDF。');
+      if(personalInformation(f.text))throw new AiError('privacy','参考材料中检测到疑似姓名、学号或联系方式，请先处理个人信息后重新上传；未发送给AI。');
+      const bytes=await readFile(join(this.store.uploads,f.diskName)),images=await renderPdf(bytes,join(this.store.dir,'ai-cache'),undefined,{maxEdge:c.id==='deepseek'?4096:8192});
+      bindings.push({id,hash:hash(bytes),text:hash(f.text),pages:f.pages});
+      for(let start=1;start<=f.pages;start+=3){const pages:number[]=Array.from({length:Math.min(4,f.pages-start+1)},(_,i)=>start+i);
+        if(pages.some(n=>!images.some(p=>p.page===n)))throw new AiError('reference','PDF有页面无法完整读取，未发送请求。');
+        const messages=referenceBatchMessages(f,pages,images.filter(p=>pages.includes(p.page)),[]);assertRequestLimits(c,messages);
+        plans.push({file:f,pages,messages,estimatedCny:cost(priceFor(c,0),estimateInput(c,messages),c.maxOutput)});if(pages.at(-1)===f.pages)break;
+      }
+    }
+    const estimatedCny=Math.ceil(plans.reduce((n,p)=>n+p.estimatedCny,0)*1e6)/1e6;
+    const previewToken=hash(JSON.stringify({assignmentId,version:a.version,config:a.config,bindings,options:{...options,consent:undefined,previewToken:undefined},model:c.model,price:priceFor(c,0),output:c.maxOutput,prompt:'reference-batch-v1',renderer:RENDER_VERSION}));
+    return {options,c,a,plans,estimatedCny,previewToken};
+  }
+  async referenceBatchPreview(assignmentId:string,body:unknown){const p=await this.prepareReferenceBatch(assignmentId,body);return {previewToken:p.previewToken,estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,remainingBudget:p.options.totalBudget,requests:p.plans.length,pages:p.options.fileIds.reduce((n,id)=>n+(this.store.get<StoredFile>('files',id)?.pages??0),0),files:p.options.fileIds.length,maxOutputTokens:p.c.maxOutput,overBudget:p.estimatedCny>p.options.totalBudget};}
+  referenceTask(assignmentId:string){const t=this.store.all<ReferenceTask>('reference_tasks').filter(t=>t.assignmentId===assignmentId).at(-1);return t?{...t,committedCny:this.outstanding(t.id).reduce((n,c)=>n+committed(c),0)}:null;}
+  cancelReferenceTask(assignmentId:string,id:string){const t=this.store.get<ReferenceTask>('reference_tasks',id);if(!t||t.assignmentId!==assignmentId)throw new AiError('reference','识别任务不存在。');if(t.status==='running'){this.store.putAi('reference_tasks',{...t,status:'cancelled',error:'已取消；后续请求不再发送，已发生或未知用量的费用保留。'});this.referenceController?.abort();}return this.store.get<ReferenceTask>('reference_tasks',id);}
+  async startReferenceTask(assignmentId:string,body:unknown){
+    if(this.referenceParsing||this.running||this.connecting.size)throw new AiError('busy','已有AI操作在进行，请等待完成。');
+    const p=await this.prepareReferenceBatch(assignmentId,body);
+    if(this.referenceParsing||this.running||this.connecting.size)throw new AiError('busy','已有AI操作在进行，请等待完成。');
+    if(p.options.consent!==true||p.options.previewToken!==p.previewToken)throw new AiError('consent','请重新预估，并明确点击开始以确认将所选PDF全部页面发送给AI及承担费用。');
+    if(p.estimatedCny>p.options.totalBudget)throw new AiError('budget','预计费用超过本次预算，可以调整预算或减少所选文件；未发送请求。');
+    this.referenceParsing=true;this.referenceController=new AbortController();
+    const task:ReferenceTask={id:'reference-'+randomUUID(),assignmentId,version:p.a.version,provider:p.c.id,status:'running',createdAt:new Date().toISOString(),error:'',warnings:[],config:courseConfig(),estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,committedCny:0,files:p.options.fileIds.map(id=>{const f=this.store.get<StoredFile>('files',id)!;return {id,name:f.name,pages:f.pages!,processedPages:[],status:'waiting'};})};
+    this.store.putAi('reference_tasks',task);void this.runReferenceTask(task,p);return task;
+  }
+  private async runReferenceTask(task:ReferenceTask,p:Awaited<ReturnType<AiService['prepareReferenceBatch']>>){
+    const byFile=new Map<string,Question[]>();const signal=this.referenceController!.signal;
+    const save=()=>{task.committedCny=this.outstanding(task.id).reduce((n,c)=>n+committed(c),0);if(!this.closed)this.store.putAi('reference_tasks',task);};
+    try{
+      for(const plan of p.plans){
+        if(signal.aborted||this.closed)throw new AiError('cancelled','识别已取消，后续页面未继续发送。');
+        const current=this.store.get<Assignment>('assignments',task.assignmentId);const file=this.store.get<StoredFile>('files',plan.file.id);
+        if(!current||current.version!==task.version||current.archived||!file)throw new AiError('version','规则或参考文件变化，后续调用已停止。');
+        const progress=task.files.find(f=>f.id===file.id)!;progress.status='processing';save();
+        const result=await this.call(p.c,plan.messages,{batchId:task.id,submissionId:'reference',assignmentId:task.assignmentId,version:task.version,pages:plan.pages.length,purpose:'reference_parse',attempt:1},task.totalBudget,task.totalBudget,signal);
+        if(signal.aborted||this.closed)throw new AiError('cancelled','识别已取消，费用已保留。');
+        let questions:Question[];
+        try{questions=referenceBatchCandidate(result.content,file,plan.pages);byFile.set(file.id,mergeReferenceQuestions(byFile.get(file.id)??[],questions,true));}
+        catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:e instanceof AiError?e.code:'reference_format',diagnostic:{...call.diagnostic,stage:'validation',validation:'rejected'}});throw e;}
+        progress.processedPages=[...new Set([...progress.processedPages,...plan.pages])].sort((a,b)=>a-b);
+        if(progress.processedPages.length===progress.pages){if(!byFile.get(file.id)?.length)throw new AiError('reference_empty',file.name+'全部页面已读取，但没有识别出可用题目；请检查文件或使用免费整理、人工补录。');checkReferenceCompleteness(file,byFile.get(file.id)!);progress.status='completed';}
+        let merged:Question[]=[];for(const q of byFile.values())merged=mergeReferenceQuestions(merged,q,false);
+        task.config={...courseConfig(),principles:'按逐题已确认的检查方式评分；漏做默认扣0.2，错误默认扣0.1，同一单元不重复扣分。',questions:merged,confirmed:false};save();
+      }
+      if(this.store.get<Assignment>('assignments',task.assignmentId)?.version!==task.version||task.files.some(f=>!this.store.get<StoredFile>('files',f.id)))throw new AiError('version','识别期间规则或文件变化，请核对费用后重新整理。');
+      if(task.files.some(f=>f.status!=='completed'))throw new AiError('reference_incomplete','部分页面尚未完成，不能作为完整结果。');
+      task.status='completed';task.warnings=['AI结果需要人工核对检查方式、题干、解答、小问及来源图像；采用后仍需保存设置。'];
+    }catch(e){task.status=signal.aborted?'cancelled':'failed';task.error=e instanceof AiError?e.message:'识别未完成，请检查文件和费用后重新预估。';for(const f of task.files)if(f.status==='processing')f.status='failed';}
+    finally{save();this.referenceParsing=false;this.referenceController=undefined;}
   }
   async preview(assignmentId:string,body:unknown){
     const options=batchOptions.parse(body);const c=this.requireConfig(options.provider);if(options.maxOutputTokens!==undefined)c.maxOutput=options.maxOutputTokens;
@@ -266,5 +332,5 @@ export class AiService {
   overview(assignmentId:string){
     return {batches:this.store.all<AiBatch>('ai_batches').filter(b=>b.assignmentId===assignmentId),calls:this.store.all<AiCall>('ai_calls').filter(c=>c.assignmentId===assignmentId)};
   }
-  close(){this.closed=true;this.controller?.abort();}
+  close(){this.closed=true;this.controller?.abort();this.referenceController?.abort();}
 }

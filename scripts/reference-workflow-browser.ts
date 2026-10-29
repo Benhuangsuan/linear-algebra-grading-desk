@@ -19,8 +19,8 @@ async function request<T>(path:string,body?:unknown){const r=await page.request.
 const state=()=>request<State>('/state');const modal=page.getByRole('dialog',{name:'调整题目'});
 const review=page.getByRole('dialog',{name:'检查整理出的题目'});
 async function save(){const response=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().includes('/api/assignments/'));await page.getByRole('button',{name:'保存设置'}).click();expect((await response).status()).toBe(200);await expect(page.getByRole('button',{name:'保存设置'})).toBeEnabled();}
-async function upload(name:string,buffer:Buffer){await page.getByLabel('添加文件',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer});await expect(review).toBeVisible();}
-async function adopt(){await review.getByRole('button',{name:'添加新发现的题目（推荐）',exact:true}).click();await expect(page.getByRole('status')).toContainText('尚未保存');}
+async function upload(name:string,buffer:Buffer){const count=await page.locator('.material-row').count();await page.getByLabel('添加文件',{exact:true}).setInputFiles({name,mimeType:'application/pdf',buffer});await expect(page.locator('.material-row')).toHaveCount(count+1);await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('auto');await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('auto');await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await expect(review).toBeVisible();}
+async function adopt(){await review.getByRole('button',{name:'添加新发现的题目（推荐）',exact:true}).click();await expect(page.locator('#settings-save-help')).toContainText('尚未保存');}
 async function edit32(){await page.locator('.question-disclosure>summary').click();await page.getByRole('button',{name:'调整 3.3 / 32',exact:true}).click();await modal.getByText(/题目对应的参考答案页面/).click();}
 const ref31=await syntheticPdf('习题3.1\n2. 合成题干甲\n合成答案甲');
 const ref32=await syntheticPdf('习题3.2\n2. 合成题干乙\n合成答案乙');
@@ -32,7 +32,7 @@ try{
   await open(first);await upload('3.2 synthetic.pdf',ref32);
   await expect(review).toContainText('当前已有 0 道题');await review.getByRole('button',{name:'暂不添加，保持现有题目',exact:true}).click();
   expect((await state()).assignments[0].config.questions).toHaveLength(0);expect((await state()).files).toHaveLength(1);
-  await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await adopt();
+  await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('auto');await page.getByRole('button',{name:'整理题目清单',exact:true}).click();await adopt();
   expect((await state()).assignments[0].config.questions).toHaveLength(0);await save();
   await page.locator('.question-disclosure>summary').click();await page.getByRole('button',{name:'调整 3.2 / 2',exact:true}).click();
   await modal.getByLabel('特殊说明',{exact:true}).fill('Synthetic teacher note');await modal.getByLabel('本单元错误扣分',{exact:true}).fill('0.3');
@@ -48,7 +48,7 @@ try{
   await modal.getByRole('button',{name:'取消本次选择',exact:true}).click();
   await modal.getByLabel('PDF 页码',{exact:true}).fill('2');await modal.getByLabel('添加的这页包含本题需要的图形',{exact:true}).uncheck();
   await modal.getByRole('button',{name:'添加这页作为题目参考',exact:true}).click();await expect(existing).toHaveCount(2);
-  await modal.getByRole('button',{name:'应用调整',exact:true}).click();await expect(page.getByRole('status')).toContainText('尚未保存');
+  await modal.getByRole('button',{name:'应用调整',exact:true}).click();await expect(page.locator('#settings-save-help')).toContainText('尚未保存');
   await page.getByRole('button',{name:'调整 3.3 / 32',exact:true}).click();await modal.getByText(/题目对应的参考答案页面/).click();await expect(existing).toHaveCount(2);
   await existing.nth(1).getByRole('button',{name:'更换这页参考',exact:true}).click();await modal.getByLabel('要换成的参考答案',{exact:true}).selectOption(f32.id);await modal.getByLabel('PDF 页码',{exact:true}).fill('1');
   await modal.getByRole('button',{name:'确认更换这页参考',exact:true}).click();await expect(modal).toContainText('请先确认这页确实用于本题');
@@ -68,8 +68,8 @@ try{
   expect(await steps.evaluateAll(els=>els.every(e=>e.parentElement===els[0].parentElement))).toBe(true);
   expect(new Set(await steps.locator(':scope > summary').evaluateAll(els=>els.map(e=>getComputedStyle(e).fontSize+' '+getComputedStyle(e).fontWeight))).size).toBe(1);
   await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('text');await page.getByText('整理参考答案',{exact:true}).click();await page.getByText('整理参考答案',{exact:true}).click();await expect(page.getByLabel('要怎样从参考答案整理出题目？')).toHaveValue('text');
-  await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('ai');const helper=page.getByRole('region',{name:'AI 辅助整理'});await expect(helper.getByRole('button',{name:'开始 AI 辅助整理'})).toBeDisabled();
-  await page.getByLabel('添加文件',{exact:true}).setInputFiles({name:'Extra synthetic.pdf',mimeType:'application/pdf',buffer:ref31});await expect(page.getByText('文件已上传。请选择要交给 AI 整理的页面，再预估费用并决定是否开始。',{exact:true})).toBeVisible();await expect(review).toHaveCount(0);expect(externalAttempts).toBe(0);
+  await page.getByLabel('要怎样从参考答案整理出题目？').selectOption('ai');const helper=page.getByRole('region',{name:'AI 辅助整理'});await expect(helper.getByRole('button',{name:'开始 AI 整理'})).toBeDisabled();
+  await page.getByLabel('添加文件',{exact:true}).setInputFiles({name:'Extra synthetic.pdf',mimeType:'application/pdf',buffer:ref31});await expect(page.getByText('文件已上传，尚未整理。请选择文件和识别方式；免费方式也需要点击整理。',{exact:true})).toBeVisible();await expect(review).toHaveCount(0);expect(externalAttempts).toBe(0);
   await page.setViewportSize({width:390,height:1000});expect(await page.locator('body').evaluate(e=>e.scrollWidth)).toBe(390);await page.screenshot({path:join(dir,'workflow-mobile.png'),fullPage:true});await page.setViewportSize({width:1450,height:1000});
   const second=await request<Assignment>('/assignments',{courseId:course.id,title:'Import order two',scope:'3.1-3.3',description:'',config:courseConfig()});await open(second);
   for(const [name,bytes] of [['3.1 synthetic.pdf',ref31],['3.3 synthetic.pdf',ref33],['3.2 synthetic.pdf',ref32]] as const){await upload(name,bytes);await adopt();await save();}

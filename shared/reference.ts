@@ -9,13 +9,16 @@ export type ReferenceSpan={text:string;x:number;y:number;width:number;height:num
 export type ReferencePage={page:number;width:number;height:number;spans:ReferenceSpan[];graphics:{x:number;y:number;width:number;height:number;kind:'image'|'vector'}[]};
 export type ReferenceLayout={version:1;pages:ReferencePage[];warnings:string[]};
 
+/** Source identity validates imports; business keys stay compatible with saved grades. */
+export function referenceIdentity(fileId:string,q:{section:string;number:string;group?:string;part?:string}){return JSON.stringify([fileId,q.section,q.group??'',q.number,q.part??'']);}
+
 /** Document headings are independent of the assignment's display-only scope. */
 export function sectionHeading(text:string):string|undefined {
   const extra=text.match(/补充章\s*第?\s*([0-9一二三四五六七八九十]+)\s*节/);
   if(extra){const digits:Record<string,number>={'一':1,'二':2,'三':3,'四':4,'五':5,'六':6,'七':7,'八':8,'九':9,'十':10};const value=/^\d+$/.test(extra[1])?Number(extra[1]):extra[1].includes('十')?(digits[extra[1][0]]??1)*10+(digits[extra[1].split('十')[1]]??0):digits[extra[1]];return value?'补充章第'+value+'节':undefined;}
   const normal=text.match(/(?:习题|章节|小节|第)\s*(\d+)\s*[.．]\s*(\d+)(?!\d)/);return normal?normal[1]+'.'+normal[2]:undefined;
 }
-export function questionGroup(text:string):'讲义题'|'附加题'|undefined {return text.match(/^(讲义题|附加题)(?:答案)?\s*[:：]?$/)?.[1] as '讲义题'|'附加题'|undefined;}
+export function questionGroup(text:string):string|undefined {const group=text.match(/^([\p{Script=Han}]{1,10}题)(?:答案)?\s*[:：]?$/u)?.[1];return group&&!/^(?:奇数题|偶数题|判断题|解答题|选择题|填空题|补充题|题目|小题)$/.test(group)?group:undefined;}
 export function allQuestionsGraded(text:string){return /所有题目均需批改|全部题目(?:均)?(?:需要|需)?批改/.test(text);}
 export function materialSection(file:{name?:string;text:string}){return sectionHeading(file.text)??sectionHeading(file.name??'')??(file.name?.match(/第\s*(\d+)\s*节/)?.[1]?'补充章第'+file.name.match(/第\s*(\d+)\s*节/)![1]+'节':undefined)??file.name?.match(/(?:^|[^\d.])(\d+\.\d+)(?=$|[^\d.])/)?.[1];}
 

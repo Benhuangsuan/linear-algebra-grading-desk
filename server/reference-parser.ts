@@ -1,5 +1,5 @@
 import {blankQuestion,questionKey,type Question,type QuestionChild} from '../shared/domain.js';
-import {courseQuestion,parseCourseMaterials} from '../shared/course.js';
+import {courseQuestion,parseCourseMaterials,materialQuestion} from '../shared/course.js';
 import {childrenOf,withChildren} from '../shared/questions.js';
 import {questionHeading,supplementNotes,sectionHeading,questionGroup,allQuestionsGraded,materialSection,type ReferenceLayout,type ReferencePage,type ReferenceSpan,type ReferenceSource} from '../shared/reference.js';
 
@@ -25,14 +25,14 @@ function source(q:Question|QuestionChild,fileId:string,page:number,graphic=false
 export function parseReferenceMaterials(materials:Material[],scope:string,strategy:ParseStrategy='auto'){
   const questions:Question[]=[],warnings:string[]=[];
   for(const file of materials){
-    const layout=file.referenceLayout;
+    const startIndex=questions.length;const layout=file.referenceLayout;
     const spans=layout?.pages.flatMap(p=>p.spans)??[];
     const colored=strategy!=='text'&&spans.some(s=>s.color==='red')&&spans.some(s=>s.color==='black');
     if(!colored){
       const inferred=materialSection(file);const fallback=parseCourseMaterials([inferred&&!sectionHeading(file.text)?'章节 '+inferred+'\n'+file.text:file.text],'').map(q=>({...q,parseMethod:'text' as const,parseWarning:'这些内容按文字整理，题干、小问和参考答案需要你对照原页检查。'}));
       for(const q of fallback)if(layout)q.referenceSources=layout.pages.map(p=>({fileId:file.id,page:p.page,graphic:p.graphics.length>0}));
       if(!fallback.length)warnings.push((file.name??'参考材料')+'：'+(!file.text.trim()?'未取得文字，请手动添加题目或选择页面辅助整理。':!inferred?'未找到章节标题，请在补充文字中填写章节和题号，或手动添加题目并指定小节。':'已找到章节，但未找到题号，请手动补充清单；已上传文件保留，可重新整理。'));
-      questions.push(...fallback);warnings.push((file.name??'参考材料')+(strategy==='text'?'：已按你的选择只整理文字，请对照 PDF 核对题干与答案。':'：未找到能可靠区分题干和答案的颜色，已只按文字整理，请检查题目内容。'));
+      questions.push(...fallback.map(q=>materialQuestion(q,file.text)));warnings.push((file.name??'参考材料')+(strategy==='text'?'：已按你的选择只整理文字，请对照 PDF 核对题干与答案。':'：未找到能可靠区分题干和答案的颜色，已只按文字整理，请检查题目内容。'));
       if(layout)for(const page of layout.pages)if(page.graphics.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页有图形但未可靠关联，请人工检查或使用页面辅助整理。');
       continue;
     }
@@ -46,12 +46,12 @@ export function parseReferenceMaterials(materials:Material[],scope:string,strate
       for(const row of pageRows){
         const text=joined(row.spans),black=joined(row.spans.filter(s=>s.color==='black'));
         const heading=sectionHeading(text),nextGroup=questionGroup(text);
-        if(heading){if(heading!==section){flush();section=heading;group=undefined;}continue;}
+        if(heading&&heading!==section){flush();section=heading;group=undefined;}
         if(nextGroup){if(nextGroup!==group)flush();group=nextGroup;continue;}
         if(/^(?:注[：:]|.*参考答案$)/.test(text))continue;
         const only=text.match(/题目\s*([\d,，、\s]+)/);
-        if(only&&section){flush();for(const number of only[1].match(/\d+/g)??[])questions.push(courseQuestion({...blankQuestion(),section,number,parseMethod:'color'}));continue;}
-        if(!section)continue;
+        if(only&&section){flush();for(const number of only[1].match(/\d+/g)??[])questions.push(courseQuestion({...blankQuestion(),section,...(group?{group}:{}),...(allGraded?{allGraded:true}:{}),number,notes:'材料仅列出了题号，无参考解。',parseMethod:'color',referenceSources:[{fileId:file.id,page:page.page,graphic:false}]}));continue;}
+        if(heading||!section)continue;
         const numbered=questionHeading(black);
         if(numbered){flush();current=withChildren({...blankQuestion(),section,...(group?{group}:{}),...(allGraded?{allGraded:true}:{}),number:numbered.number,prompt:numbered.text,answer:joined(row.spans.filter(s=>s.color==='red')),notes:supplementNotes(numbered.number),parseMethod:'color'},[]);source(current,file.id,page.page);boundaries.push({y:row.y,q:current});continue;}
         if(!current)continue;
@@ -79,10 +79,11 @@ export function parseReferenceMaterials(materials:Material[],scope:string,strate
       if(page.graphics.length&&!boundaries.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页的图形尚未关联到题目，请人工核对。');
     }
     flush();
+    for(let i=startIndex;i<questions.length;i++)questions[i]=materialQuestion(questions[i],file.text);
     if(!questions.some(q=>q.referenceSources?.some(s=>s.fileId===file.id)))warnings.push((file.name??'参考材料')+'：未找到可用的章节或题号，请手动添加题目并填写小节；文件保留，可重新整理。');
   }
   const unique=new Map<string,Question>();
-  for(const q of questions){const key=questionKey(q);if(!unique.has(key))unique.set(key,q);else warnings.push(key+'：重复来源仅保留首份候选，请核对。');}
+  for(const q of questions){const key=questionKey(q);if(!unique.has(key))unique.set(key,q);else {const previous=unique.get(key)!;if(previous.prompt!==q.prompt||previous.answer!==q.answer){previous.typeConfirmed=false;previous.parseWarning='不同来源存在同号但内容不同，请手工指定小节或题组后核对。';}warnings.push(key+'：重复来源仅保留首份候选，请核对。');}}
   return {questions:[...unique.values()],warnings:[...new Set(warnings)]};
 }
 

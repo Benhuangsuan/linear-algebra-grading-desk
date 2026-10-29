@@ -12,7 +12,8 @@ export const childSchema = z.object({
 export type QuestionChild = z.infer<typeof childSchema>;
 export const questionSchema = z.object({
   section: z.string().trim().min(1).max(50), number: z.string().trim().min(1).max(50),
-  group:z.enum(['讲义题','附加题']).optional(), allGraded:z.boolean().optional(),
+  group:z.string().trim().min(1).max(30).optional(), allGraded:z.boolean().optional(),
+  classificationEvidence:z.string().max(2000).optional(),typeConfirmed:z.boolean().optional(),sourceExcerpt:z.string().max(4000).optional(),
   part: z.string().trim().max(30).default(''),
   type: z.enum(['completion_only', 'graded']), required: z.boolean(),
   maxPoints: score.nullable(), missingPenalty: score.nullable(), errorPenalty: score.nullable(),

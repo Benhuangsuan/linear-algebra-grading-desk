@@ -1,0 +1,2 @@
+import type {Config} from './domain.js';
+export type ReferenceTask={id:string;assignmentId:string;version:number;provider:string;status:'running'|'completed'|'failed'|'cancelled'|'interrupted';createdAt:string;error:string;warnings:string[];config:Config;estimatedCny:number;totalBudget:number;committedCny:number;files:{id:string;name:string;pages:number;processedPages:number[];status:'waiting'|'processing'|'completed'|'failed'}[]};

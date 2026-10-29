@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Assignment, Course, StoredFile, Submission, History, State } from '../shared/domain.js';
 
 type Entity = Course | Assignment | StoredFile | Submission | History;
-type AiTable='ai_batches'|'ai_calls'|'ai_cache';
+type AiTable='ai_batches'|'ai_calls'|'ai_cache'|'reference_tasks';
 type Table = 'courses'|'assignments'|'files'|'submissions'|'history'|'versions'|AiTable;
 export class Store {
   private transactionDepth=0;
@@ -28,7 +28,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS files_assignment ON files(assignment_id);
       CREATE INDEX IF NOT EXISTS submissions_assignment ON submissions(assignment_id);
       CREATE INDEX IF NOT EXISTS history_submission ON history(submission_id);`);
-    this.db.exec('CREATE TABLE IF NOT EXISTS ai_batches(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_calls(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_cache(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
+    this.db.exec('CREATE TABLE IF NOT EXISTS ai_batches(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_calls(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_cache(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS reference_tasks(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
     for (const s of this.all<Submission>('submissions').filter(s=>['queued','processing'].includes(s.status))) {
       this.put('submissions',{...s,status:'failed',error:'上次退出时任务未完成，可单独重试。',revision:s.revision+1});
     }
