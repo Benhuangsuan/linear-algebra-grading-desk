@@ -1,3 +1,4 @@
+import {DEFAULT_COURSE_PRINCIPLES,ALL_GRADED_PRINCIPLES} from './reference.js';
 import {questionKey,type Question,type QuestionChild,type Config} from './domain.js';
 
 /** Legacy string lists remain readable; IDs survive label changes and reordering. */
@@ -51,5 +52,6 @@ export function reconcileQuestions(previous:Config,candidate:Config,replaceConte
     });const labels=new Set(children.map(c=>c.label));
     return withChildren(parent,[...children,...childrenOf(parsed).filter(c=>!labels.has(c.label))]);
   });
-  return {...previous,questions:[...questions,...remaining.values()],confirmed:false};
+  const merged=[...questions,...remaining.values()];
+  return {...previous,principles:merged.some(q=>q.allGraded)&&previous.principles===DEFAULT_COURSE_PRINCIPLES?ALL_GRADED_PRINCIPLES:previous.principles,questions:merged,confirmed:false};
 }

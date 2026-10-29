@@ -158,7 +158,7 @@ export function createApp(dataDir:string,aiDependencies:AiDependencies={}) {
     try {
       const materials=files.map(f=>store.get<StoredFile>('files',f.id)!);const parsed=parseReferenceMaterials(materials,b.scope,b.strategy);
       const extra=parseCourseMaterials([b.sourceText],b.scope);
-      const questions=[...parsed.questions,...extra.filter(q=>!parsed.questions.some(p=>p.section===q.section&&p.number===q.number&&p.part===q.part))];
+      const questions=[...parsed.questions,...extra.filter(q=>!parsed.questions.some(p=>p.section===q.section&&p.group===q.group&&p.number===q.number&&p.part===q.part))];
       const materialCounts=materials.map(f=>({fileId:f.id,name:f.name,questions:parseReferenceMaterials([f],b.scope,b.strategy).questions.length}));
       res.json({config:{...courseConfig(questions),sourceText:b.sourceText},warnings:[...warnings,...parsed.warnings],materialCounts});
     }catch(e){fail(400,e instanceof Error?e.message:'题目清单生成失败');}

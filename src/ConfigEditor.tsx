@@ -24,14 +24,14 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
   async function generate(uploaded?:StoredFile[]){
     setBusy(true);setError('');
     try{const result=await api<ImportResult>(`/assignments/${assignment.id}/prepare`,'POST',{scope:draft.scope,sourceText:draft.config.sourceText??'',strategy:method==='ai'?'auto':method});setWarnings(result.warnings);setReplaceContent(new Set());
-      if(!result.config.questions.length){setMessage('没有识别出题目，请补充题目文字或手动添加。');return;}
+      if(!result.config.questions.length){setMessage('没有整理出题目：请查看下方提醒，补充章节和题号或手动添加。已上传文件保留，可以重新整理。');return;}
       setReview({...result,uploadedIds:uploaded?.map(f=>f.id)});
     }catch(e){setError(e instanceof Error?e.message:'整理失败，请重试。');}finally{setBusy(false);}
   }
   function keep(){setReview(null);setPrepared({scope:draft.scope,text:draft.config.sourceText??''});setMessage('保持现有题目不变，已上传的 PDF 仍然保留。');}
   async function save(){
     if(!draft.title.trim()){setError('请填写作业名称。');return;}setBusy(true);setError('');
-    try{if(prepared.scope!==draft.scope||prepared.text!==(draft.config.sourceText??'')){await generate();return;}
+    try{if(prepared.text!==(draft.config.sourceText??'')){await generate();return;}
       const config={...draft.config,confirmed:draft.config.questions.length>0};configSchema.parse(config);
       await api(`/assignments/${assignment.id}`,'PUT',{title:draft.title,description:draft.description,scope:draft.scope,config,version:assignment.version,regradeUnconfirmed:false});setDirty(false);onDirty(false);await onSaved();setMessage('已保存到本机。');
     }catch(e){setError(e instanceof ZodError?[...new Set(e.issues.map(i=>/[\u4e00-\u9fff]/.test(i.message)?i.message:'请检查题目与分值配置。'))].join('；'):e instanceof Error?e.message:'保存失败');}finally{setBusy(false);}
@@ -40,7 +40,8 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
     {error&&<Notice tone="danger">{error}</Notice>}
     <div className="settings-section"><div className="section-heading"><h2>作业信息</h2><button className="primary" aria-describedby={dirty||busy||helperBusy?'settings-save-help':undefined} disabled={busy||helperBusy} onClick={()=>void save()}><Save size={15}/>{busy?'处理中…':'保存设置'}{dirty?' *':''}</button></div>
       {(dirty||busy||helperBusy)&&<p id="settings-save-help" className={'settings-save-state'+(dirty?' unsaved':'')} role="status">{busy||helperBusy?'正在整理或保存，请等待完成后再保存设置。':dirty?'存在尚未保存的更改，请点击“保存设置”。':'当前题目和规则已保存到本机。'}</p>}
-      <div className="form-grid"><label>作业名称<input disabled={busy||helperBusy} value={draft.title} maxLength={200} onChange={e=>change({...draft,title:e.target.value})}/></label><label>作业范围<input disabled={busy||helperBusy} placeholder="例如 1.1-1.3 或 2.2-2.4,2.8" value={draft.scope} onChange={e=>change({...draft,scope:e.target.value,config:{...draft.config,confirmed:false}})}/></label></div>
+      <div className="form-grid"><label>作业名称<input disabled={busy||helperBusy} value={draft.title} maxLength={200} onChange={e=>change({...draft,title:e.target.value})}/></label><label>作业范围<input disabled={busy||helperBusy} maxLength={2000} placeholder="可自由填写本次作业内容" value={draft.scope} onChange={e=>change({...draft,scope:e.target.value,config:{...draft.config,confirmed:false}})}/></label></div>
+      <p className="subtle">作业范围用于说明本次作业内容，可以自由填写；题目小节以参考材料和人工校对为准。</p>
       <details className="quiet-details"><summary>补充说明</summary><textarea aria-label="作业说明" rows={3} value={draft.description} onChange={e=>change({...draft,description:e.target.value})}/></details>
     </div>
     <FilesPanel assignmentId={assignment.id} files={files} onRefresh={onSaved} onUploaded={async uploaded=>{await onSaved();if(method==='ai'){setMessage('文件已上传。请选择要交给 AI 整理的页面，再预估费用并决定是否开始。');return;}await generate(uploaded);}} disabled={assignment.archived||busy||helperBusy}/>
@@ -48,7 +49,7 @@ export function ConfigEditor({assignment,files,onSaved,onDirty}:{assignment:Assi
     <section className="settings-section"><div className="section-heading"><h2>题目清单 <span className="count">{draft.config.questions.length}</span></h2></div>
       {message&&<p className="save-message">{message}</p>}
       <details className="reference-step reference-workflow" open><summary>整理参考答案</summary><label>要怎样从参考答案整理出题目？<select disabled={busy||helperBusy} value={method} onChange={e=>setMethod(e.target.value as typeof method)}><option value="auto">自动整理（推荐，免费）</option><option value="text">只按文字整理（免费）</option><option value="ai">AI 辅助整理（可能收费）</option></select></label>
-        {method!=='ai'&&<><p className="subtle">{method==='auto'?'先检查黑色题干、红色答案的格式；能使用颜色时按颜色分开，否则只按文字整理。':'只整理可提取的题号和文字，不根据颜色区分题干与答案。'}仅在本机处理，不发送给 AI；整理后请检查。</p><button disabled={busy||helperBusy} onClick={()=>void generate()}>整理题目清单</button></>}
+        {method!=='ai'&&<><p className="subtle">{method==='auto'?'先检查黑色题干、红色答案的格式；能使用颜色时按颜色分开，否则只按文字整理。':'只整理可提取的题号和文字，不根据颜色区分题干与答案。'}仅在本机处理，不发送给 AI；整理后请检查。</p><button title="重新读取已上传参考材料，不需要重复上传；检查后采用并保存" disabled={busy||helperBusy} onClick={()=>void generate()}>整理题目清单</button></>}
         <div hidden={method!=='ai'}><ReferenceAssistant active={method==='ai'} assignment={assignment} files={files} scope={draft.scope} onBusyChange={setHelperBusy} onCandidate={(config,w)=>{setWarnings(w);setReplaceContent(new Set());setReview({config,warnings:w});}}/></div>
       </details>
       <details className="reference-step"><summary>检查需要确认的题目{warnings.length>0?`（${warnings.length} 条提醒）`:''}</summary>{warnings.length?warnings.map((w,i)=><p key={i}>{w}</p>):<p className="subtle">暂无整理提醒。整理完成后仍需核对题号、题干、参考答案与图片。</p>}</details>
@@ -85,7 +86,7 @@ function QuestionModal({q:original,files,onSave,onClose,onDirty}:{q:Question;fil
   }}>
     <div className="form-grid">
       <label>小节<input required value={q.section} onChange={e=>setQ({...q,section:e.target.value})}/></label>
-      <label>题号<input required value={q.number} onChange={e=>setQ({...q,number:e.target.value})}/></label>
+      <label>题组<select aria-label="题组" value={q.group??''} onChange={e=>setQ({...q,group:e.target.value as Question['group']||undefined})}><option value="">不分组</option><option value="讲义题">讲义题</option><option value="附加题">附加题</option></select></label><label>题号<input required value={q.number} onChange={e=>setQ({...q,number:e.target.value})}/></label>
       <label>检查方式<select aria-label="检查方式" value={q.type} onChange={e=>setQ({...q,type:e.target.value as Question['type'],errorPenalty:e.target.value==='completion_only'?0:.1})}><option value="completion_only">仅检查完成</option><option value="graded">批改正确性</option></select></label>
       <label>题型<select value={q.kind??'solution'} onChange={e=>setQ({...q,kind:e.target.value as Question['kind']})}><option value="solution">解答题</option><option value="true_false">判断题</option></select></label>
       {q.kind!=='true_false'&&<label>解答题扣分单元<select value={q.unitMode??'whole'} onChange={e=>setQ({...q,unitMode:e.target.value as Question['unitMode']})}><option value="whole">整题一个单元</option><option value="independent">小问互相独立，逐项计分</option></select></label>}

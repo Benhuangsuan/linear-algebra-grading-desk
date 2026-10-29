@@ -1,7 +1,7 @@
 import {blankQuestion,questionKey,type Question,type QuestionChild} from '../shared/domain.js';
-import {courseQuestion,parseCourseMaterials,parseScope} from '../shared/course.js';
+import {courseQuestion,parseCourseMaterials} from '../shared/course.js';
 import {childrenOf,withChildren} from '../shared/questions.js';
-import {questionHeading,supplementNotes,type ReferenceLayout,type ReferencePage,type ReferenceSpan,type ReferenceSource} from '../shared/reference.js';
+import {questionHeading,supplementNotes,sectionHeading,questionGroup,allQuestionsGraded,materialSection,type ReferenceLayout,type ReferencePage,type ReferenceSpan,type ReferenceSource} from '../shared/reference.js';
 
 type Material={id:string;name?:string;text:string;referenceLayout?:ReferenceLayout};
 export type ParseStrategy='auto'|'black-red'|'text';
@@ -23,33 +23,37 @@ function source(q:Question|QuestionChild,fileId:string,page:number,graphic=false
 
 /** Color is opt-in per import, or auto-detected only when both black and red exist. */
 export function parseReferenceMaterials(materials:Material[],scope:string,strategy:ParseStrategy='auto'){
-  const allowed=parseScope(scope),questions:Question[]=[],warnings:string[]=[];
+  const questions:Question[]=[],warnings:string[]=[];
   for(const file of materials){
     const layout=file.referenceLayout;
     const spans=layout?.pages.flatMap(p=>p.spans)??[];
     const colored=strategy!=='text'&&spans.some(s=>s.color==='red')&&spans.some(s=>s.color==='black');
     if(!colored){
-      const fallback=parseCourseMaterials([file.text],scope).map(q=>({...q,parseMethod:'text' as const,parseWarning:'这些内容按文字整理，题干、小问和参考答案需要你对照原页检查。'}));
+      const inferred=materialSection(file);const fallback=parseCourseMaterials([inferred&&!sectionHeading(file.text)?'章节 '+inferred+'\n'+file.text:file.text],'').map(q=>({...q,parseMethod:'text' as const,parseWarning:'这些内容按文字整理，题干、小问和参考答案需要你对照原页检查。'}));
+      for(const q of fallback)if(layout)q.referenceSources=layout.pages.map(p=>({fileId:file.id,page:p.page,graphic:p.graphics.length>0}));
+      if(!fallback.length)warnings.push((file.name??'参考材料')+'：'+(!file.text.trim()?'未取得文字，请手动添加题目或选择页面辅助整理。':!inferred?'未找到章节标题，请在补充文字中填写章节和题号，或手动添加题目并指定小节。':'已找到章节，但未找到题号，请手动补充清单；已上传文件保留，可重新整理。'));
       questions.push(...fallback);warnings.push((file.name??'参考材料')+(strategy==='text'?'：已按你的选择只整理文字，请对照 PDF 核对题干与答案。':'：未找到能可靠区分题干和答案的颜色，已只按文字整理，请检查题目内容。'));
       if(layout)for(const page of layout.pages)if(page.graphics.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页有图形但未可靠关联，请人工检查或使用页面辅助整理。');
       continue;
     }
     warnings.push(...layout!.warnings);
     if(strategy==='auto')warnings.push((file.name??'参考材料')+'：已按黑色题干、红色答案整理。请确认材料确实采用这种颜色，并检查分离结果。');
-    let section='',current:Question|undefined,child:QuestionChild|undefined;
-    const flush=()=>{if(current&&(!allowed||allowed.has(current.section))){current.kind=/判断|对错|正误/.test(current.prompt)?'true_false':'solution';questions.push(courseQuestion(current));}current=undefined;child=undefined;};
+    let section=materialSection(file)??'',group:Question['group'];const allGraded=allQuestionsGraded(file.text);let current:Question|undefined,child:QuestionChild|undefined;
+    const flush=()=>{if(current){current.kind=/判断|对错|正误/.test(current.prompt)?'true_false':'solution';questions.push(courseQuestion(current));}current=undefined;child=undefined;};
     for(const page of layout!.pages){
       const pageRows=lines(page);const boundaries:{y:number;q:Question}[]=[];
       if(current)boundaries.push({y:0,q:current});
       for(const row of pageRows){
         const text=joined(row.spans),black=joined(row.spans.filter(s=>s.color==='black'));
-        const heading=text.match(/(?:习题|章节|小节|第)\s*(\d+)\s*[.．]\s*(\d+)\b/);
-        if(heading&&`${heading[1]}.${heading[2]}`!==section){flush();section=`${heading[1]}.${heading[2]}`;}
+        const heading=sectionHeading(text),nextGroup=questionGroup(text);
+        if(heading){if(heading!==section){flush();section=heading;group=undefined;}continue;}
+        if(nextGroup){if(nextGroup!==group)flush();group=nextGroup;continue;}
+        if(/^(?:注[：:]|.*参考答案$)/.test(text))continue;
         const only=text.match(/题目\s*([\d,，、\s]+)/);
-        if(only&&section){flush();for(const number of only[1].match(/\d+/g)??[])if(!allowed||allowed.has(section))questions.push(courseQuestion({...blankQuestion(),section,number,parseMethod:'color'}));continue;}
+        if(only&&section){flush();for(const number of only[1].match(/\d+/g)??[])questions.push(courseQuestion({...blankQuestion(),section,number,parseMethod:'color'}));continue;}
         if(!section)continue;
         const numbered=questionHeading(black);
-        if(numbered){flush();current=withChildren({...blankQuestion(),section,number:numbered.number,prompt:numbered.text,answer:joined(row.spans.filter(s=>s.color==='red')),notes:supplementNotes(numbered.number),parseMethod:'color'},[]);source(current,file.id,page.page);boundaries.push({y:row.y,q:current});continue;}
+        if(numbered){flush();current=withChildren({...blankQuestion(),section,...(group?{group}:{}),...(allGraded?{allGraded:true}:{}),number:numbered.number,prompt:numbered.text,answer:joined(row.spans.filter(s=>s.color==='red')),notes:supplementNotes(numbered.number),parseMethod:'color'},[]);source(current,file.id,page.page);boundaries.push({y:row.y,q:current});continue;}
         if(!current)continue;
         if(/^[\p{Script=Han}]{2,12}[.．:：]/u.test(black)&&!/[，。]/.test(black)&&black.length<22){current.parseWarning='发现可能的独立标题，请人工核对题目边界。';warnings.push(questionKey(current)+'：'+current.parseWarning);}
         const label=black.match(/^([a-z])\s*[.．、)）]\s*(.*)$/i);
@@ -75,6 +79,7 @@ export function parseReferenceMaterials(materials:Material[],scope:string,strate
       if(page.graphics.length&&!boundaries.length)warnings.push((file.name??'参考材料')+' 第 '+page.page+' 页的图形尚未关联到题目，请人工核对。');
     }
     flush();
+    if(!questions.some(q=>q.referenceSources?.some(s=>s.fileId===file.id)))warnings.push((file.name??'参考材料')+'：未找到可用的章节或题号，请手动添加题目并填写小节；文件保留，可重新整理。');
   }
   const unique=new Map<string,Question>();
   for(const q of questions){const key=questionKey(q);if(!unique.has(key))unique.set(key,q);else warnings.push(key+'：重复来源仅保留首份候选，请核对。');}

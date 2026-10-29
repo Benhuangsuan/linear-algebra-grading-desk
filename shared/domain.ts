@@ -12,6 +12,7 @@ export const childSchema = z.object({
 export type QuestionChild = z.infer<typeof childSchema>;
 export const questionSchema = z.object({
   section: z.string().trim().min(1).max(50), number: z.string().trim().min(1).max(50),
+  group:z.enum(['讲义题','附加题']).optional(), allGraded:z.boolean().optional(),
   part: z.string().trim().max(30).default(''),
   type: z.enum(['completion_only', 'graded']), required: z.boolean(),
   maxPoints: score.nullable(), missingPenalty: score.nullable(), errorPenalty: score.nullable(),
@@ -56,7 +57,7 @@ export const configSchema = z.object({
       ctx.addIssue({ code: 'custom', message: `${key} 扣分超过该题满分` });
   }
   for (const q of c.questions) {
-    if (!q.part && c.questions.some(other => other.section === q.section && other.number === q.number && other.part))
+    if (!q.part && c.questions.some(other => other.section === q.section && other.group === q.group && other.number === q.number && other.part))
       ctx.addIssue({ code: 'custom', message: `${questionKey(q)} 不可同时配置整题与其小问，避免重复计分` });
   }
   if (c.mode === 'points' && c.questions.every(q => q.maxPoints !== null) && Math.abs(c.questions.reduce((s,q) => s + (q.maxPoints ?? 0),0) - c.total) > .00001)
@@ -85,7 +86,7 @@ export type Submission = {
 };
 export type History = { id: string; submissionId: string; action: string; at: string; snapshot: Submission };
 export type State = { courses: Course[]; assignments: Assignment[]; files: StoredFile[]; submissions: Submission[]; provider: string; mockEnabled?:boolean };
-export function questionKey(q: Pick<Question,'section'|'number'|'part'>) { return `${q.section} / ${q.number}${q.part ? ` / ${q.part}` : ''}`; }
+export function questionKey(q: Pick<Question,'section'|'number'|'part'|'group'>) { return `${q.section} / ${q.group?q.group+' ':''}${q.number}${q.part ? ` / ${q.part}` : ''}`; }
 export function blankQuestion(): Question { return { section:'1.1',number:'',part:'',type:'graded',required:true,maxPoints:null,missingPenalty:null,errorPenalty:null,partialCredit:'',notes:'',prompt:'',answer:'',disputed:false }; }
 export function blankConfig(): Config { return { total:10,mode:'deduction',principles:'',questions:[],confirmed:false }; }
 export function configurationWarnings(c: Config): string[] {
@@ -158,7 +159,7 @@ export function reportFor(s: Pick<Submission,'grade'|'review'|'status'>): string
 export function deductionRows(config:Config,rows:Judgment[]):Judgment[] {
   if(config.policy!=='linear-algebra-1.1')return rows;
   const groups=new Map<string,Judgment[]>();
-  for(const row of rows){const q=config.questions.find(q=>questionKey(q)===row.key);if(!q)continue;const key=`${q.section} / ${q.number}`;groups.set(key,[...(groups.get(key)??[]),row]);}
+  for(const row of rows){const q=config.questions.find(q=>questionKey(q)===row.key);if(!q)continue;const key=`${q.section} / ${q.group?q.group+' ':''}${q.number}`;groups.set(key,[...(groups.get(key)??[]),row]);}
   return [...groups.entries()].flatMap(([key,group])=>{
     if(group.length>1&&group.every(r=>r.recognition==='missing'||r.recognition==='not_found')){
       const first=group[0];return [{...first,key,deduction:Math.max(...group.map(r=>r.deduction??0)),reason:group.some(r=>r.recognition==='not_found')?'未检索到整题作答，暂按漏做处理。':'整题未做。',pages:[]}];

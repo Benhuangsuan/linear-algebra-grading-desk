@@ -14,7 +14,6 @@ import {estimateInput,cost,accounting,committed} from './budget.js';
 import {validateVision} from './validate.js';
 import {hasFormalResult} from '../../shared/submission-state.js';
 import {referenceParseOptions,referenceMessages,referenceCandidate} from './reference.js';
-import {parseScope} from '../../shared/course.js';
 import {gradingBlockers} from '../../shared/ai-readiness.js';
 
 type Cache={id:string;grade:Grade;at:string};
@@ -110,7 +109,7 @@ export class AiService {
   }
   private async referenceInput(assignmentId:string,body:unknown){
     const options=referenceParseOptions.parse(body);const c=this.requireConfig(options.provider);if(options.maxOutputTokens!==undefined)c.maxOutput=options.maxOutputTokens;
-    parseScope(options.scope);if(new Set(options.pages).size!==options.pages.length)throw new AiError('reference','PDF 页码有重复，请检查。');
+    if(new Set(options.pages).size!==options.pages.length)throw new AiError('reference','PDF 页码有重复，请检查。');
     const assignment=this.store.get<Assignment>('assignments',assignmentId);
     if(!assignment||assignment.archived||assignment.version!==options.expectedVersion)throw new AiError('version','作业不存在、已归档或规则已变化，请刷新后重新预估');
     const f=this.store.get<StoredFile>('files',options.fileId);
@@ -136,7 +135,7 @@ export class AiService {
       if(p.estimatedCny>=.3&&!p.options.warningAcknowledged)throw new AiError('budget','本次预估达到 ¥0.30，请额外确认费用后再调用');
       const result=await this.call(p.c,p.messages,{batchId:'reference-'+randomUUID(),submissionId:'reference',assignmentId,version:p.assignment.version,pages:p.options.pages.length,purpose:'reference_parse',attempt:1},p.options.perSubmissionBudget,p.options.totalBudget);
       let config:Config;
-      try{config=referenceCandidate(result.content,p.options.fileId,p.options.pages,p.options.scope);}
+      try{config=referenceCandidate(result.content,p.options.fileId,p.options.pages,p.options.scope,this.store.get<StoredFile>('files',p.options.fileId));}
       catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:'reference_format',diagnostic:{...call.diagnostic,stage:'validation',validation:'rejected'}});throw e;}
       if(this.store.get<Assignment>('assignments',assignmentId)?.version!==p.assignment.version||!this.store.get<StoredFile>('files',p.options.fileId))throw new AiError('version','辅助整理期间规则或参考文件已变化；调用费用已保留，未覆盖任何配置，请刷新后人工检查');
       return {config,callId:result.callId,warnings:['整理结果尚未加入题目清单，已保存的题目和成绩没有改变。请对照所选 PDF 页面检查，再决定添加或更新哪些内容，最后保存设置。']};

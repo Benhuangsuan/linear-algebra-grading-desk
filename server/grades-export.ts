@@ -8,7 +8,7 @@ export function gradeCell(submission:Submission):string {
   if(score===null)return '待确认';
   const missing=new Set<string>();
   for(const row of deductionRows(config,rows)) {
-    const questions=config.questions.filter(q=>questionKey(q)===row.key||(config.policy==='linear-algebra-1.1'&&q.section+' / '+q.number===row.key));
+    const questions=config.questions.filter(q=>questionKey(q)===row.key||(config.policy==='linear-algebra-1.1'&&questionKey({...q,part:''})===row.key));
     if(questions.some(q=>q.required)&&row.verdict==='missing'&&(row.deduction??0)>0&&(row.recognition==='missing'||row.recognition==='not_found'))missing.add(row.key);
   }
   return score+(missing.size?'，漏'+missing.size+'题':'');

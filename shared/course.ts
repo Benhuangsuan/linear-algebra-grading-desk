@@ -1,13 +1,13 @@
 import { blankConfig, blankQuestion, questionKey, type Config, type Judgment, type Question } from './domain.js';
 import {extractChildren,withChildren,childrenOf} from './questions.js';
-import {questionHeading,supplementNotes} from './reference.js';
+import {questionHeading,supplementNotes,sectionHeading,questionGroup,allQuestionsGraded,DEFAULT_COURSE_PRINCIPLES as COURSE_PRINCIPLES,ALL_GRADED_PRINCIPLES} from './reference.js';
 
-export const COURSE_PRINCIPLES='满分 10 分。布置的奇数题仅检查完成，不因答案错误扣分；偶数题核对正确性。漏做整题扣 0.2 分，未检索到作答先按漏做处理；偶数题每处错误扣 0.1 分，整题漏做不重复计错误。判断题只看判断是否正确；解答题接受逻辑与结果均正确的不同方法和等价解。';
+export {DEFAULT_COURSE_PRINCIPLES as COURSE_PRINCIPLES} from './reference.js';
 export function courseQuestion(q:Question):Question {
-  const only=/^\d+$/.test(q.number)&&Number(q.number)%2===1;
+  const only=!q.allGraded&&/^\d+$/.test(q.number)&&Number(q.number)%2===1;
   return {...q,type:only?'completion_only':'graded',required:true,maxPoints:null,missingPenalty:.2,errorPenalty:only?0:.1,partialCredit:only?'有实质作答即算完成。':'判断题判断正确即给分；解答题接受正确的不同解法。'};
 }
-export function courseConfig(questions:Question[]=[]):Config {return {...blankConfig(),policy:'linear-algebra-1.1',principles:COURSE_PRINCIPLES,questions:questions.map(courseQuestion)};}
+export function courseConfig(questions:Question[]=[]):Config {return {...blankConfig(),policy:'linear-algebra-1.1',principles:questions.some(q=>q.allGraded)?ALL_GRADED_PRINCIPLES:COURSE_PRINCIPLES,questions:questions.map(courseQuestion)};}
 export function suggestedDeduction(config:Config,q:Question,recognition:Judgment['recognition'],verdict:Judgment['verdict'],count=1):number|null {
   if(recognition==='uncertain')return null;
   if(recognition==='missing'||recognition==='not_found')return q.required?q.missingPenalty:0;
@@ -16,6 +16,7 @@ export function suggestedDeduction(config:Config,q:Question,recognition:Judgment
 }
 export function parseScope(scope:string):Set<string>|null {
   if(!scope.trim())return null;
+  if(!/^[\d.\s,，、;；—–~～至-]+$/.test(scope))return null;
   const sections=new Set<string>();
   const normalized=scope.replace(/[—–~～至]/g,'-').replace(/\s*-\s*/g,'-');
   for(const token of normalized.split(/[,，、;；\s]+/).filter(Boolean)) {
@@ -27,24 +28,26 @@ export function parseScope(scope:string):Set<string>|null {
   return sections;
 }
 
+export function scopeSections(scope:string){try{return parseScope(scope);}catch{return null;}}
+
 /** Local draft extraction, never executes instructions from reference documents. */
 export function parseCourseMaterials(texts:string[],scope:string):Question[] {
-  const allowed=parseScope(scope);const found=new Map<string,Question>();
+  const allowed=scopeSections(scope);const found=new Map<string,Question>();
   const add=(q:Question)=>{if(allowed&&!allowed.has(q.section))return;const key=questionKey(q);const previous=found.get(key);found.set(key,previous?withChildren({...previous,prompt:previous.prompt||q.prompt,answer:previous.answer||q.answer,kind:previous.kind??q.kind},[...childrenOf(previous),...childrenOf(q).filter(c=>!childrenOf(previous).some(p=>p.label===c.label))]):q);};
   for(const text of texts){
-    let section='';let current:Question|undefined;let answerLines:string[]=[];
+    let section='';let group:Question['group'];const allGraded=allQuestionsGraded(text);let current:Question|undefined;let answerLines:string[]=[];
     const flush=()=>{if(current){current.answer=answerLines.join('\n').trim();const firstChild=current.answer.search(/^[ \t]*a[ \t]*(?:\r?\n[ \t]*)?[.．、)）]/im);if(current.kind==='true_false'&&firstChild>0)current.prompt+='\n'+current.answer.slice(0,firstChild).trim();const parentKey=questionKey(current);add(courseQuestion(withChildren(current,extractChildren(current.answer,current.kind).map(c=>({...c,id:parentKey+':'+c.id})))));}current=undefined;answerLines=[];};
     for(const raw of text.split(/\r?\n/)){
       const line=raw.trim();if(!line)continue;
-      const heading=line.match(/(?:习题|章节|小节|第)\s*(\d+)\s*[.．]\s*(\d+)\b/);
+      const heading=sectionHeading(line);const nextGroup=questionGroup(line);if(nextGroup){if(nextGroup!==group)flush();group=nextGroup;continue;}if(/^(?:注[：:]|.*参考答案$)/.test(line)&&!heading)continue;
       const list=line.match(/^(\d+\.\d+)\s*[:：/]\s*([\d,，、\s]+)$/);
       if(list){flush();section=list[1];for(const number of list[2].match(/\d+/g)??[])add(courseQuestion({...blankQuestion(),section,number}));continue;}
-      if(heading&&`${heading[1]}.${heading[2]}`!==section){flush();section=`${heading[1]}.${heading[2]}`;}
+      if(heading){if(heading!==section){flush();section=heading;group=undefined;}continue;}
       if(!section)continue;
       const only=line.match(/题目\s*([\d,，、\s]+)/);
       if(only){flush();for(const number of only[1].replace(/(?<=\d)\s+(?=\d)/g,'').match(/\d+/g)??[])add(courseQuestion({...blankQuestion(),section,number}));continue;}
       const numbered=questionHeading(line);
-      if(numbered){flush();current={...blankQuestion(),section,number:numbered.number,prompt:numbered.text,notes:supplementNotes(numbered.number),kind:/判断|对错|正误/.test(numbered.text)?'true_false':'solution'};continue;}
+      if(numbered&&!(numbered.text===''&&/[)）]$/.test(line))){flush();current={...blankQuestion(),section,...(group?{group}:{}),...(allGraded?{allGraded:true}:{}),number:numbered.number,prompt:numbered.text,notes:supplementNotes(numbered.number),kind:/判断|对错|正误/.test(numbered.text)?'true_false':'solution'};continue;}
       if(current)answerLines.push(line);
     }
     flush();
