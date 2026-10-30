@@ -13,6 +13,9 @@
 /* Reference images stay inside the optional source disclosure. */
 .reference-page{display:block;max-width:100%;height:auto;border:1px solid var(--border,#ddd)}
 .reference-options{border:0;padding:0;min-width:0}
+.reference-options>legend{padding:0;margin-bottom:10px;font-size:14px;font-weight:400;color:#485d41}
+.reference-options>.checkbox{margin:8px 0}
+.reference-assistant>.reference-options+.notice{margin-top:12px}
 .reference-source{margin:.75rem 0}
 .reference-step{border-top:1px solid #e5eddc;margin-top:16px;padding-top:4px}
 .reference-step>summary,.question-disclosure.reference-step>summary{display:list-item;list-style:disclosure-closed;font-size:14px;font-weight:600;color:#415c3d;padding:14px 0;margin:0;cursor:pointer}

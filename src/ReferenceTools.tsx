@@ -21,7 +21,6 @@ export function ReferenceAssistant({assignment,files,scope,onCandidate,onBusyCha
  const options=()=>({fileIds:selected,provider,scope,expectedVersion:assignment.version,totalBudget:Number(total)});
  async function run(start:boolean){setPreparing(true);setError('');const before=live.current;try{if(start){const t=await api<ReferenceTask>(base+'/tasks','POST',{...options(),consent:true,previewToken:valid?.previewToken});setTask(t);setQuote(null);}else{const q=await api<Quote>(base+'/batch-preview','POST',options());if(before===live.current)setQuote({...q,context:before});}}catch(e){setError(e instanceof Error?e.message:'识别未完成，请检查文件及费用。');}finally{setPreparing(false);}}
  return <div className="reference-assistant" role="region" aria-label="AI 辅助整理">
-  <p>选中的参考 PDF 全部页面将发送给所选 AI 服务，可能产生费用。请遵守材料使用与保密要求；先预估，再点击开始确认本次传输和费用。学生批改不会自动开始。</p>
   <fieldset disabled={!!busy} className="reference-options"><legend>参考 PDF</legend><div className="toolbar"><button type="button" onClick={()=>setSelected(materials.map(f=>f.id))}>全选参考文件</button><button type="button" onClick={()=>setSelected([])}>取消全选参考文件</button></div>
    {materials.map(f=><label className="checkbox" key={f.id}><input type="checkbox" aria-label={'识别 '+f.name} checked={selected.includes(f.id)} onChange={e=>setSelected(old=>e.target.checked?[...old,f.id]:old.filter(id=>id!==f.id))}/>{f.name} · {f.pages??'?'}页</label>)}
    <p role="status">已选择{selected.length}份文件，共{pages}页（全部原页）</p>
