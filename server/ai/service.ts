@@ -16,7 +16,8 @@ import {hasFormalResult} from '../../shared/submission-state.js';
 import {referenceParseOptions,referenceMessages,referenceCandidate} from './reference.js';
 import {referenceBatchOptions,referenceBatchMessages,referenceBatchCandidate,checkReferenceCompleteness,mergeReferenceQuestions,personalInformation} from './reference-batch.js';
 import {courseConfig} from '../../shared/course.js';
-import type {ReferenceTask} from '../../shared/reference-task.js';
+import {REFERENCE_PROMPT_VERSION,type ReferenceTask,type ReferenceResult,type ReferenceResponse,type ReferenceSelection} from '../../shared/reference-task.js';
+import {ReferenceLibrary,resultConfig} from './reference-library.js';
 import type {Question} from '../../shared/domain.js';
 import {gradingBlockers} from '../../shared/ai-readiness.js';
 
@@ -31,9 +32,12 @@ export class AiService {
   private activeBatch:string|undefined;
   private connections=new Map<ProviderId,string>();
   private connecting=new Set<ProviderId>();
+  readonly referenceLibrary:ReferenceLibrary;
+  private referenceQuotes=new Map<string,{fingerprint:string;at:number}>();
   private referenceParsing=false;
   private referenceController:AbortController|undefined;
   constructor(private store:Store,private save:Save,private deps:AiDependencies={}){
+    this.referenceLibrary=new ReferenceLibrary(store);
     for(const t of store.all<ReferenceTask>('reference_tasks').filter(t=>t.status==='running'))store.putAi('reference_tasks',{...t,status:'interrupted',error:'上次退出时识别未完成，没有自动续发收费请求；请检查已完成部分和费用，再重新预估。'});
     for(const b of store.all<AiBatch>('ai_batches').filter(b=>b.status==='running')){
       b.status='paused';b.updatedAt=new Date().toISOString();
@@ -75,7 +79,7 @@ export class AiService {
     return {assignment,config,student,references,key,bytes,studentPages};
   }
   private outstanding(id:string){return this.store.all<AiCall>('ai_calls').filter(c=>c.batchId===id);}
-  private async call(c:ProviderConfig,messages:Message[],info:{batchId:string;submissionId:string;assignmentId:string;version:number;pages:number;purpose:AiCall['purpose'];attempt:number},per:number,total:number,signal?:AbortSignal){
+  private async call(c:ProviderConfig,messages:Message[],info:{batchId:string;submissionId:string;assignmentId:string;version:number;pages:number;purpose:AiCall['purpose'];attempt:number},per:number,total:number,signal?:AbortSignal,reference?:{resultId:string;fileId:string;fileHash:string;sections:string[];pages:number[]}){
     if(this.closed||signal?.aborted)throw new AiError('cancelled','任务已停止');
     assertRequestLimits(c,messages);const input=estimateInput(c,messages);
     if(input+c.maxOutput>980000)throw new AiError('input_limit','输入超过模型安全上下文限制；未省略页面');
@@ -84,13 +88,15 @@ export class AiService {
     if(prior.filter(x=>x.submissionId===info.submissionId).reduce((a,b)=>a+committed(b),0)+reserve>per+1e-8||prior.reduce((a,b)=>a+committed(b),0)+reserve>total+1e-8)throw new AiError('budget','下一次调用可能超出预算，已停止；现有结果与未知用量预留均保留');
     const record:AiCall={id:randomUUID(),...info,provider:c.id,model:c.model,at:new Date().toISOString(),status:'reserved',reservedCny:reserve,estimatedCny:null,inputTokens:null,outputTokens:null,cacheHitTokens:null,usage:null,price,error:'',diagnostic:{maxOutputTokens:c.maxOutput,stage:'request',inputImages:messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(p=>p.type==='image_url').length:0),0)}};
     this.store.putAi('ai_calls',record);
+    if(reference){const entry=this.store.get<ReferenceResult>('reference_results',reference.resultId);if(entry){entry.callIds=[...new Set([...entry.callIds,record.id])];this.referenceLibrary.update(entry);}}
     try{
-      const result=await complete(c,messages,this.deps.fetcher,signal);
+      const result=await complete(c,messages,this.deps.fetcher,signal,reference?partial=>{if(!this.closed)this.referenceLibrary.retain({id:record.id,taskId:info.batchId,assignmentId:info.assignmentId,...reference,promptVersion:REFERENCE_PROMPT_VERSION,model:partial.model,finish:partial.finish,createdAt:new Date().toISOString(),content:partial.content});}:undefined);
       if(this.closed)throw new AiError('cancelled','服务已停止；未重复请求');
+      if(reference&&info.purpose==='reference_parse')this.referenceLibrary.retain({id:record.id,taskId:info.batchId,assignmentId:info.assignmentId,...reference,promptVersion:REFERENCE_PROMPT_VERSION,model:result.model,finish:result.finish,createdAt:new Date().toISOString(),content:result.content});
       const finishReason=['stop','length','content_filter','tool_calls','function_call'].includes(result.finish)?result.finish:result.finish?'other':'missing';
       const settled={...record,...accounting(result.usage,price),model:result.model,status:'success' as const,diagnostic:{...record.diagnostic,httpStatus:result.httpStatus,finishReason,stage:'completion' as const,responseCharacters:result.content.length,reasoningCharacters:result.reasoningCharacters,reasoningTokens:reportedReasoningTokens(result.usage)}};
       this.store.putAi('ai_calls',settled);
-      if(result.finish!=='stop')throw new AiError(result.finish==='length'?'output_limit':'incomplete_response',result.finish==='length'?'模型耗尽本次 '+c.maxOutput+' token 输出额度（含思考与评分）。请在批改选项提高额度后重新预估，或人工处理；原样重试仍可能失败，未自动重试。已有用量保留。':'模型未正常结束，未保存不完整评分；请查看批次诊断后明确重试或人工处理。',false,{stage:'completion'});
+      if(result.finish!=='stop')throw new AiError(result.finish==='length'?'output_limit':'incomplete_response',result.finish==='length'?(info.purpose==='reference_parse'?'这份参考答案耗尽了本次输出额度（包含思考），未得到完整结果。已完成文件仍可使用；请核对原页或重新预估后单独重试，不会自动增加额度或重复收费。':'模型耗尽本次 '+c.maxOutput+' token 输出额度（含思考与评分）。请在批改选项提高额度后重新预估，或人工处理；原样重试仍可能失败，未自动重试。已有用量保留。'):'模型未正常结束，未保存不完整结果；请查看批次诊断后明确重试或人工处理。',false,{stage:'completion'});
       return {...result,callId:record.id};
     }catch(e){
       if(this.closed)throw new AiError('cancelled','服务已停止；未知用量预留保留');
@@ -142,71 +148,84 @@ export class AiService {
       const result=await this.call(p.c,p.messages,{batchId:'reference-'+randomUUID(),submissionId:'reference',assignmentId,version:p.assignment.version,pages:p.options.pages.length,purpose:'reference_parse',attempt:1},p.options.perSubmissionBudget,p.options.totalBudget);
       let config:Config;
       try{config=referenceCandidate(result.content,p.options.fileId,p.options.pages,p.options.scope,this.store.get<StoredFile>('files',p.options.fileId));}
-      catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:'reference_format',diagnostic:{...call.diagnostic,stage:'validation',validation:'rejected'}});throw e;}
+      catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:'reference_format',diagnostic:{...call.diagnostic,...(e instanceof AiError?e.diagnostic:{}),stage:'validation',validation:'rejected'}});throw e;}
       if(this.store.get<Assignment>('assignments',assignmentId)?.version!==p.assignment.version||!this.store.get<StoredFile>('files',p.options.fileId))throw new AiError('version','辅助整理期间规则或参考文件已变化；调用费用已保留，未覆盖任何配置，请刷新后人工检查');
       return {config,callId:result.callId,warnings:['整理结果尚未加入题目清单，已保存的题目和成绩没有改变。请对照所选 PDF 页面检查，再决定添加或更新哪些内容，最后保存设置。']};
     }finally{this.referenceParsing=false;}
   }
   private async prepareReferenceBatch(assignmentId:string,body:unknown){
-    const options=referenceBatchOptions.parse(body),c=this.requireConfig(options.provider);c.retries=0;c.maxOutput=32768;
-    const a=this.store.get<Assignment>('assignments',assignmentId);
-    if(!a||a.archived||a.version!==options.expectedVersion)throw new AiError('version','作业规则已变化或作业已归档，请刷新后重新预估。');
+    const options=referenceBatchOptions.parse(body),c=this.config(options.provider);c.retries=0;c.maxOutput=32768;
+    const a=this.referenceLibrary.assignment(assignmentId);if(a.archived||a.version!==options.expectedVersion)throw new AiError('version','作业规则已变化或作业已归档，请刷新后重新预估。');
     if(new Set(options.fileIds).size!==options.fileIds.length)throw new AiError('reference','参考文件选择重复。');
-    const plans:{file:StoredFile;pages:number[];messages:Message[];estimatedCny:number}[]=[];const bindings:unknown[]=[];
+    const selections=[...options.reuseResults,...options.recoverResults];if(selections.some(s=>!options.fileIds.includes(s.fileId))||new Set(selections.map(s=>s.fileId)).size!==selections.length)throw new AiError('reference','同一文件不能同时复用和重新整理，请重新选择。');
+    const summaries=await this.referenceLibrary.summaries(assignmentId),reuse=new Map<string,ReferenceResult>(),initial=new Map<string,ReferenceResult>(),aliases=new Map<string,string>(),contentOwners=new Map<string,string>();
+    const plans:{file:StoredFile;fileHash:string;pages:number[];messages:Message[];estimatedCny:number}[]=[],bindings:unknown[]=[],repeats:{fileId:string;resultId:string;name:string;questions:number}[]=[];
     for(const id of options.fileIds){
-      const f=this.store.get<StoredFile>('files',id);
-      if(!f||f.assignmentId!==a.id||f.kind==='student'||f.mime!=='application/pdf'||!/^[a-f0-9-]+\.pdf$/.test(f.diskName)||!f.pages)throw new AiError('reference','请选择当前作业中有效的参考PDF。');
+      const {file:f,fileHash,sections}=await this.referenceLibrary.binding(assignmentId,id);bindings.push({id,hash:fileHash,text:hash(f.text),pages:f.pages,sections});
+      const selected=options.reuseResults.find(s=>s.fileId===id);if(selected){const chosen=(await this.referenceLibrary.selected(assignmentId,selected)).result;reuse.set(id,chosen);bindings.push({reuse:selected,questions:hash(JSON.stringify(chosen.questions))});continue;}
+      const compatible=summaries.filter(r=>r.status==='complete'&&r.fileHash===fileHash&&JSON.stringify(r.sections)===JSON.stringify(sections)),previous=compatible.find(r=>r.fileId===id)??compatible[0];if(previous)repeats.push({fileId:id,resultId:previous.id,name:f.name,questions:previous.questionCount});
+      const recovering=options.recoverResults.find(s=>s.fileId===id);let covered:number[]=[];
+      if(recovering){const r=(await this.referenceLibrary.selected(assignmentId,recovering,false)).result;if(r.status==='complete')throw new AiError('reference','这份文件已有完整结果，请选择使用已有结果或明确重新整理。');if(r.processedPages.length<f.pages!&&r.questions.length){initial.set(id,r);covered=r.processedPages;}bindings.push({recovery:recovering,questions:hash(JSON.stringify(r.questions)),covered});}
+      const contentKey=JSON.stringify([fileHash,sections]),owner=contentOwners.get(contentKey);if(owner){aliases.set(id,owner);bindings.push({sameContent:id,owner});continue;}contentOwners.set(contentKey,id);
+      if(!c.key||!c.enabled)this.requireConfig(options.provider);
       if(personalInformation(f.text))throw new AiError('privacy','参考材料中检测到疑似姓名、学号或联系方式，请先处理个人信息后重新上传；未发送给AI。');
-      const bytes=await readFile(join(this.store.uploads,f.diskName)),images=await renderPdf(bytes,join(this.store.dir,'ai-cache'),undefined,{maxEdge:c.id==='deepseek'?4096:8192});
-      bindings.push({id,hash:hash(bytes),text:hash(f.text),pages:f.pages});
-      for(let start=1;start<=f.pages;start+=3){const pages:number[]=Array.from({length:Math.min(4,f.pages-start+1)},(_,i)=>start+i);
-        if(pages.some(n=>!images.some(p=>p.page===n)))throw new AiError('reference','PDF有页面无法完整读取，未发送请求。');
-        const messages=referenceBatchMessages(f,pages,images.filter(p=>pages.includes(p.page)),[]);assertRequestLimits(c,messages);
-        plans.push({file:f,pages,messages,estimatedCny:cost(priceFor(c,0),estimateInput(c,messages),c.maxOutput)});if(pages.at(-1)===f.pages)break;
-      }
+      const images=await renderPdf(await readFile(join(this.store.uploads,f.diskName)),join(this.store.dir,'ai-cache'),undefined,{maxEdge:c.id==='deepseek'?4096:8192});
+      for(let start=1;start<=f.pages!;start+=3){const pages=Array.from({length:Math.min(4,f.pages!-start+1)},(_,i)=>start+i);if(!pages.every(p=>covered.includes(p))){if(pages.some(n=>!images.some(p=>p.page===n)))throw new AiError('reference','PDF有页面无法完整读取，未发送请求。');const messages=referenceBatchMessages(f,pages,images.filter(p=>pages.includes(p.page)),initial.get(id)?.questions??[]);assertRequestLimits(c,messages);plans.push({file:f,fileHash,pages,messages,estimatedCny:cost(priceFor(c,0),estimateInput(c,messages),c.maxOutput)});}if(pages.at(-1)===f.pages)break;}
     }
     const estimatedCny=Math.ceil(plans.reduce((n,p)=>n+p.estimatedCny,0)*1e6)/1e6;
-    const previewToken=hash(JSON.stringify({assignmentId,version:a.version,config:a.config,bindings,options:{...options,consent:undefined,previewToken:undefined},model:c.model,price:priceFor(c,0),output:c.maxOutput,prompt:'reference-batch-v3',renderer:RENDER_VERSION}));
-    return {options,c,a,plans,estimatedCny,previewToken};
+    const previewToken=hash(JSON.stringify({assignmentId,version:a.version,config:a.config,bindings,options:{...options,consent:undefined,previewToken:undefined,repeatConfirmed:undefined},model:c.model,price:priceFor(c,0),output:c.maxOutput,prompt:REFERENCE_PROMPT_VERSION,renderer:RENDER_VERSION,repeats}));
+    return {options,c,a,plans,estimatedCny,previewToken,reuse,initial,repeats,aliases};
   }
-  async referenceBatchPreview(assignmentId:string,body:unknown){const p=await this.prepareReferenceBatch(assignmentId,body);return {previewToken:p.previewToken,estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,remainingBudget:p.options.totalBudget,requests:p.plans.length,pages:p.options.fileIds.reduce((n,id)=>n+(this.store.get<StoredFile>('files',id)?.pages??0),0),files:p.options.fileIds.length,maxOutputTokens:p.c.maxOutput,overBudget:p.estimatedCny>p.options.totalBudget};}
+  async referenceBatchPreview(assignmentId:string,body:unknown){
+    const p=await this.prepareReferenceBatch(assignmentId,body);for(const [key,value] of this.referenceQuotes)if(Date.now()-value.at>120000)this.referenceQuotes.delete(key);if(this.referenceQuotes.size>=100)this.referenceQuotes.delete(this.referenceQuotes.keys().next().value!);const previewToken=hash(randomUUID()+p.previewToken);this.referenceQuotes.set(previewToken,{fingerprint:p.previewToken,at:Date.now()});
+    return {previewToken,estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,remainingBudget:p.options.totalBudget,requests:p.plans.length,pages:p.options.fileIds.reduce((n,id)=>n+(this.store.get<StoredFile>('files',id)?.pages??0),0),files:p.options.fileIds.length,newFiles:p.options.fileIds.length-p.reuse.size-p.aliases.size,reusedFiles:p.reuse.size+p.aliases.size,repeats:p.repeats,maxOutputTokens:p.c.maxOutput,overBudget:p.estimatedCny>p.options.totalBudget,expiresAt:Date.now()+120000};
+  }
   referenceTask(assignmentId:string){const t=this.store.all<ReferenceTask>('reference_tasks').filter(t=>t.assignmentId===assignmentId).at(-1);return t?{...t,committedCny:this.outstanding(t.id).reduce((n,c)=>n+committed(c),0)}:null;}
   cancelReferenceTask(assignmentId:string,id:string){const t=this.store.get<ReferenceTask>('reference_tasks',id);if(!t||t.assignmentId!==assignmentId)throw new AiError('reference','识别任务不存在。');if(t.status==='running'){this.store.putAi('reference_tasks',{...t,status:'cancelled',error:'已取消；后续请求不再发送，已发生或未知用量的费用保留。'});this.referenceController?.abort();}return this.store.get<ReferenceTask>('reference_tasks',id);}
   async startReferenceTask(assignmentId:string,body:unknown){
     if(this.referenceParsing||this.running||this.connecting.size)throw new AiError('busy','已有AI操作在进行，请等待完成。');
-    const p=await this.prepareReferenceBatch(assignmentId,body);
+    const p=await this.prepareReferenceBatch(assignmentId,body),quote=p.options.previewToken?this.referenceQuotes.get(p.options.previewToken):undefined;
     if(this.referenceParsing||this.running||this.connecting.size)throw new AiError('busy','已有AI操作在进行，请等待完成。');
-    if(p.options.consent!==true||p.options.previewToken!==p.previewToken)throw new AiError('consent','请重新预估，并明确点击开始以确认将所选PDF全部页面发送给AI及承担费用。');
+    if(p.options.consent!==true||!quote||quote.fingerprint!==p.previewToken||Date.now()-quote.at>120000)throw new AiError('consent','预估已过期、服务已重启或选项发生变化，请重新预估并点击开始确认费用。');
+    if(p.repeats.length&&!p.options.repeatConfirmed)throw new AiError('reference_repeat','部分文件已有完整结果。请使用已有结果，或在提醒中明确选择重新整理；不会自动覆盖题目。');
     if(p.estimatedCny>p.options.totalBudget)throw new AiError('budget','预计费用超过本次预算，可以调整预算或减少所选文件；未发送请求。');
-    this.referenceParsing=true;this.referenceController=new AbortController();
-    const task:ReferenceTask={id:'reference-'+randomUUID(),assignmentId,version:p.a.version,provider:p.c.id,status:'running',createdAt:new Date().toISOString(),error:'',warnings:[],config:courseConfig(),estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,committedCny:0,files:p.options.fileIds.map(id=>{const f=this.store.get<StoredFile>('files',id)!;return {id,name:f.name,pages:f.pages!,processedPages:[],status:'waiting'};})};
+    this.referenceQuotes.delete(p.options.previewToken!);this.referenceParsing=true;this.referenceController=new AbortController();
+    const task:ReferenceTask={id:'reference-'+randomUUID(),assignmentId,version:p.a.version,provider:p.c.id,status:'running',createdAt:new Date().toISOString(),error:'',warnings:[],config:courseConfig(),estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,committedCny:0,referenceVersion:1,files:p.options.fileIds.map(id=>{const f=this.store.get<StoredFile>('files',id)!,r=p.reuse.get(id);return {id,name:f.name,pages:f.pages!,processedPages:r?Array.from({length:f.pages!},(_,i)=>i+1):[],status:r?'completed':'waiting',...(r?{resultId:r.id,fileHash:r.fileHash}:{})};})};
     this.store.putAi('reference_tasks',task);void this.runReferenceTask(task,p);return task;
   }
   private async runReferenceTask(task:ReferenceTask,p:Awaited<ReturnType<AiService['prepareReferenceBatch']>>){
-    const byFile=new Map<string,Question[]>();for(const file of task.files){const saved=task.config.questions.filter(q=>q.referenceSources?.some(s=>s.fileId===file.id));if(saved.length)byFile.set(file.id,structuredClone(saved));}const signal=this.referenceController!.signal;
-    const save=()=>{task.committedCny=this.outstanding(task.id).reduce((n,c)=>n+committed(c),0);if(!this.closed)this.store.putAi('reference_tasks',task);};
+    const byFile=new Map<string,Question[]>(),signal=this.referenceController!.signal;for(const file of task.files){const reused=p.reuse.get(file.id),saved=reused?.questions??task.config.questions.filter(q=>q.referenceSources?.some(s=>s.fileId===file.id));if(saved.length)byFile.set(file.id,structuredClone(saved));}
+    const entries=new Map<string,ReferenceResult>();const save=()=>{task.committedCny=this.outstanding(task.id).reduce((n,c)=>n+committed(c),0);if(!this.closed)this.store.putAi('reference_tasks',task);};
+    const draft=()=>{try{let merged:Question[]=[];for(const q of byFile.values())merged=mergeReferenceQuestions(merged,q,false);task.config=resultConfig(merged);}catch(e){if(e instanceof AiError&&e.code==='reference_conflict'){task.config=resultConfig([]);task.warnings=['各文件已分别保存；合并时请先选择同号题目的内容。'];}else throw e;}};
     try{
       for(const plan of p.plans){
         if(signal.aborted||this.closed)throw new AiError('cancelled','识别已取消，后续页面未继续发送。');
-        const current=this.store.get<Assignment>('assignments',task.assignmentId);const file=this.store.get<StoredFile>('files',plan.file.id);
-        if(!current||current.version!==task.version||current.archived||!file)throw new AiError('version','规则或参考文件变化，后续调用已停止。');
-        const progress=task.files.find(f=>f.id===file.id)!;progress.status='processing';save();
-        const result=await this.call(p.c,plan.messages,{batchId:task.id,submissionId:'reference',assignmentId:task.assignmentId,version:task.version,pages:plan.pages.length,purpose:'reference_parse',attempt:1},task.totalBudget,task.totalBudget,signal);
-        if(signal.aborted||this.closed)throw new AiError('cancelled','识别已取消，费用已保留。');
-        let questions:Question[];
-        try{questions=referenceBatchCandidate(result.content,file,plan.pages);byFile.set(file.id,mergeReferenceQuestions(byFile.get(file.id)??[],questions,true));}
-        catch(e){const call=this.store.get<AiCall>('ai_calls',result.callId)!;this.store.putAi('ai_calls',{...call,status:'failed',error:e instanceof AiError?e.code:'reference_format',diagnostic:{...call.diagnostic,stage:'validation',validation:'rejected'}});throw e;}
-        progress.processedPages=[...new Set([...progress.processedPages,...plan.pages])].sort((a,b)=>a-b);
-        if(progress.processedPages.length===progress.pages){if(!byFile.get(file.id)?.length)throw new AiError('reference_empty',file.name+'全部页面已读取，但没有识别出可用题目；请检查文件或使用免费整理、人工补录。');checkReferenceCompleteness(file,byFile.get(file.id)!);progress.status='completed';}
-        let merged:Question[]=[];for(const q of byFile.values())merged=mergeReferenceQuestions(merged,q,false);
-        task.config={...courseConfig(),principles:'按逐题已确认的检查方式评分；漏做默认扣0.2，错误默认扣0.1，同一单元不重复扣分。',questions:merged,confirmed:false};save();
+        const current=this.store.get<Assignment>('assignments',task.assignmentId),binding=await this.referenceLibrary.binding(task.assignmentId,plan.file.id),file=binding.file;
+        if(!current||current.version!==task.version||current.archived||binding.fileHash!==plan.fileHash)throw new AiError('version','规则或参考文件变化，后续调用已停止。');
+        const progress=task.files.find(f=>f.id===file.id)!;let entry=entries.get(file.id);if(!entry){entry=this.referenceLibrary.begin(task,file,plan.fileHash,p.initial.get(file.id));entry.model=p.c.model;this.referenceLibrary.update(entry);entries.set(file.id,entry);if(entry.questions.length)byFile.set(file.id,structuredClone(entry.questions));}progress.resultId=entry.id;progress.fileHash=entry.fileHash;progress.status='processing';progress.error='';save();
+        let response:ReferenceResponse|undefined;
+        try{
+          const result=await this.call(p.c,plan.messages,{batchId:task.id,submissionId:'reference',assignmentId:task.assignmentId,version:task.version,pages:plan.pages.length,purpose:'reference_parse',attempt:1},task.totalBudget,task.totalBudget,signal,{resultId:entry.id,fileId:file.id,fileHash:plan.fileHash,sections:binding.sections,pages:plan.pages});
+          response=this.store.get<ReferenceResponse>('reference_responses',result.callId);entry.model=result.model;entry.callIds=[...new Set([...entry.callIds,result.callId])];entry.responseIds=[...new Set([...entry.responseIds,result.callId])];this.referenceLibrary.update(entry);
+          if(signal.aborted||this.closed)throw new AiError('cancelled','识别已取消，已收到响应和费用保留，可离线检查。');
+          const questions=referenceBatchCandidate(result.content,file,plan.pages);entry.questions=mergeReferenceQuestions(entry.questions,questions,true);entry.processedPages=[...new Set([...entry.processedPages,...plan.pages])].sort((a,b)=>a-b);progress.processedPages=entry.processedPages;
+          // Persist this file before whole-task merging/completeness, so another file cannot erase it.
+          this.referenceLibrary.update(entry);
+          if(entry.processedPages.length===entry.pages){checkReferenceCompleteness(file,entry.questions);if(!entry.questions.length)throw new AiError('reference_empty','这一份文件没有识别出可用题目，请核对原页或免费整理。');entry.status='complete';entry.completedAt=new Date().toISOString();progress.status='completed';}
+          if(response)this.referenceLibrary.retain({...response,validation:'accepted',error:''});this.referenceLibrary.update(entry);byFile.set(file.id,entry.questions);draft();save();
+        }catch(e){
+          if(this.closed)throw e;
+          const code=e instanceof AiError?e.code:'reference_format',message=e instanceof Error?e.message:'本文件未完成，请核对原页。';const stored=this.store.get<ReferenceResult>('reference_results',entry.id);entry.callIds=stored?.callIds??entry.callIds;entry.responseIds=[...new Set([...entry.responseIds,...entry.callIds.filter(id=>this.store.get('reference_responses',id))])];entry.status=entry.status==='complete'?'complete':entry.questions.length?'partial':'failed';entry.error=message;entry.errorCode=code;this.referenceLibrary.update(entry);progress.error=message;
+          if(response){this.referenceLibrary.retain({...response,validation:'rejected',error:message});const call=this.store.get<AiCall>('ai_calls',response.id)!;this.store.putAi('ai_calls',{...call,status:'failed',error:code,diagnostic:{...call.diagnostic,...(e instanceof AiError?e.diagnostic:{}),stage:'validation',validation:'rejected'}});}throw e;
+        }
       }
-      if(this.store.get<Assignment>('assignments',task.assignmentId)?.version!==task.version||task.files.some(f=>!this.store.get<StoredFile>('files',f.id)))throw new AiError('version','识别期间规则或文件变化，请核对费用后重新整理。');
-      if(task.files.some(f=>f.status!=='completed'))throw new AiError('reference_incomplete','部分页面尚未完成，不能作为完整结果。');
-      task.status='completed';task.warnings=['AI结果需要人工核对检查方式、题干、解答、小问及来源图像；采用后仍需保存设置。'];
-    }catch(e){task.status=signal.aborted?'cancelled':'failed';task.error=e instanceof AiError?e.message:'识别未完成，请检查文件和费用后重新预估。';for(const f of task.files)if(f.status==='processing')f.status='failed';}
+      for(const [alias,owner] of p.aliases){const original=task.files.find(f=>f.id===owner);if(!original?.resultId)throw new AiError('reference','同内容文件的来源结果尚未完成。');const reused=(await this.referenceLibrary.selected(task.assignmentId,{fileId:alias,resultId:original.resultId})).result;byFile.set(alias,reused.questions);const progress=task.files.find(f=>f.id===alias)!;progress.status='completed';progress.processedPages=Array.from({length:progress.pages},(_,i)=>i+1);progress.resultId=original.resultId;progress.fileHash=reused.fileHash;}
+      draft();if(this.store.get<Assignment>('assignments',task.assignmentId)?.version!==task.version||task.files.some(f=>!this.store.get<StoredFile>('files',f.id)))throw new AiError('version','识别期间规则或文件变化，已完成文件仍保留，请刷新后核对。');
+      if(task.files.some(f=>f.status!=='completed'))throw new AiError('reference_incomplete','部分文件尚未完成，已完整的文件可分别使用。');task.status='completed';task.warnings=[...task.warnings,'结果按文件保存，采用后仍需点击“保存设置”；人工规则与旧成绩保留。'];
+    }catch(e){task.status=signal.aborted?'cancelled':'failed';task.error=e instanceof AiError?e.message:'识别未完成，请检查文件和费用；已完成文件仍可使用。';for(const f of task.files)if(f.status==='processing')f.status='failed';}
     finally{save();this.referenceParsing=false;this.referenceController=undefined;}
   }
+
   async preview(assignmentId:string,body:unknown){
     const options=batchOptions.parse(body);const c=this.requireConfig(options.provider);if(options.maxOutputTokens!==undefined)c.maxOutput=options.maxOutputTokens;
     if(new Set(options.ids).size!==options.ids.length)throw new AiError('duplicate','提交列表重复');

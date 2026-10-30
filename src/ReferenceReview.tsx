@@ -19,6 +19,7 @@ export function ReferenceReview({previous,result,files,selected,onSelected,onKee
       {summary.newChildren.length>0&&<p>另外发现已有大题下的 {summary.newChildren.length} 个新小问。</p>}
     </div>
     <p>添加后只更新当前页面的题目清单，<strong>还要点击“保存设置”才会保存到本机</strong>。已有扣分规则和人工修改默认保留。</p>
+    {result.warnings.length>0&&<details className="quiet-details"><summary>采用前需要留意的事项</summary>{result.warnings.map((warning,i)=><p key={i}>{warning}</p>)}</details>}
     <div className="candidate-list">
       {summary.added.length>0&&<section><h3>将添加的新题（{summary.added.length}）</h3><p>{summary.added.map(questionKey).join('、')}</p></section>}
       {summary.newChildren.length>0&&<section><h3>将添加的新小问</h3><p>{summary.newChildren.map(c=>c.parent+' / '+c.label).join('、')}</p></section>}

@@ -15,7 +15,7 @@ function safeUsage(value:unknown,key:string):unknown {
   if(value===undefined)return null;
   return JSON.parse(JSON.stringify(value,(_k,v:unknown)=>typeof v==='string'?scrub(v,key):v)) as unknown;
 }
-export async function complete(c:ProviderConfig,messages:Message[],fetcher:Fetch=fetch,signal?:AbortSignal):Promise<TransportResult>{
+export async function complete(c:ProviderConfig,messages:Message[],fetcher:Fetch=fetch,signal?:AbortSignal,onInterrupted?:(result:TransportResult)=>void):Promise<TransportResult>{
   if(!c.enabled)throw new AiError('disabled','真实 API 尚未启用；请先配置 AI_ALLOW_PAID 并获得调用授权');
   if(!c.key)throw new AiError('missing_key','未检测到 '+(c.id==='deepseek'?'DEEPSEEK_API_KEY':'DASHSCOPE_API_KEY'));
   assertRequestLimits(c,messages);
@@ -53,7 +53,7 @@ export async function complete(c:ProviderConfig,messages:Message[],fetcher:Fetch
   try{
     for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>32*1024*1024)throw new AiError('format','响应超出本机限制');pending+=decoder.decode(part.value,{stream:true});let at:number;while((at=pending.indexOf('\n'))>=0){consume(pending.slice(0,at).replace(/\r$/,''));pending=pending.slice(at+1);}}
     pending+=decoder.decode();if(pending.trim())consume(pending);
-  }catch(e){await reader.cancel().catch(()=>{});if(e instanceof AiError)throw new AiError(e.code,e.message,e.retryable,{httpStatus:response.status,stage:'response',...e.diagnostic});throw new AiError(signal?.aborted?'cancelled':timeout.aborted?'timeout':'network','响应中断，用量按未知处理，保留预算预留',false,{httpStatus:response.status,stage:'response'});}
+  }catch(e){if(content)onInterrupted?.({content:scrub(content,c.key),model:scrub(model,c.key),usage:safeUsage(usage,c.key),finish:finish||'interrupted',httpStatus:response.status,reasoningCharacters});await reader.cancel().catch(()=>{});if(e instanceof AiError)throw new AiError(e.code,e.message,e.retryable,{httpStatus:response.status,stage:'response',...e.diagnostic});throw new AiError(signal?.aborted?'cancelled':timeout.aborted?'timeout':'network','响应中断，用量按未知处理，保留预算预留',false,{httpStatus:response.status,stage:'response'});}
   finally{reader.releaseLock();}
   return {content:scrub(content,c.key),model:scrub(model,c.key),usage:safeUsage(usage,c.key),finish,httpStatus:response.status,reasoningCharacters};
 }

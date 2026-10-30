@@ -12,7 +12,7 @@ export const batchOptions=z.object({
 });
 export type BatchOptions=z.infer<typeof batchOptions>;
 export type ProviderStatus={id:ProviderId;name:string;model:string;configured:boolean;connection:string;enabled:boolean;priceDate:string;defaultMaxOutputTokens:number};
-export type AiDiagnostic={stage?:'prepare'|'request'|'response'|'completion'|'validation'|'save';httpStatus?:number;finishReason?:string;maxOutputTokens?:number;retryable?:boolean;validation?:'accepted'|'rejected';responseCharacters?:number;reasoningCharacters?:number;reasoningTokens?:number;inputImages?:number};
+export type AiDiagnostic={stage?:'prepare'|'request'|'response'|'completion'|'validation'|'save';httpStatus?:number;finishReason?:string;maxOutputTokens?:number;retryable?:boolean;validation?:'accepted'|'rejected';responseCharacters?:number;reasoningCharacters?:number;reasoningTokens?:number;inputImages?:number;schemaFields?:string[]};
 export function reportedReasoningTokens(usage:unknown):number|undefined{
   const parsed=z.object({completion_tokens:z.number().int().nonnegative(),completion_tokens_details:z.object({reasoning_tokens:z.number().int().nonnegative()})}).safeParse(usage);
   if(parsed.success&&parsed.data.completion_tokens_details.reasoning_tokens<=parsed.data.completion_tokens)return parsed.data.completion_tokens_details.reasoning_tokens;
