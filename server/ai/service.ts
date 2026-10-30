@@ -166,7 +166,7 @@ export class AiService {
       }
     }
     const estimatedCny=Math.ceil(plans.reduce((n,p)=>n+p.estimatedCny,0)*1e6)/1e6;
-    const previewToken=hash(JSON.stringify({assignmentId,version:a.version,config:a.config,bindings,options:{...options,consent:undefined,previewToken:undefined},model:c.model,price:priceFor(c,0),output:c.maxOutput,prompt:'reference-batch-v1',renderer:RENDER_VERSION}));
+    const previewToken=hash(JSON.stringify({assignmentId,version:a.version,config:a.config,bindings,options:{...options,consent:undefined,previewToken:undefined},model:c.model,price:priceFor(c,0),output:c.maxOutput,prompt:'reference-batch-v3',renderer:RENDER_VERSION}));
     return {options,c,a,plans,estimatedCny,previewToken};
   }
   async referenceBatchPreview(assignmentId:string,body:unknown){const p=await this.prepareReferenceBatch(assignmentId,body);return {previewToken:p.previewToken,estimatedCny:p.estimatedCny,totalBudget:p.options.totalBudget,remainingBudget:p.options.totalBudget,requests:p.plans.length,pages:p.options.fileIds.reduce((n,id)=>n+(this.store.get<StoredFile>('files',id)?.pages??0),0),files:p.options.fileIds.length,maxOutputTokens:p.c.maxOutput,overBudget:p.estimatedCny>p.options.totalBudget};}
@@ -183,7 +183,7 @@ export class AiService {
     this.store.putAi('reference_tasks',task);void this.runReferenceTask(task,p);return task;
   }
   private async runReferenceTask(task:ReferenceTask,p:Awaited<ReturnType<AiService['prepareReferenceBatch']>>){
-    const byFile=new Map<string,Question[]>();const signal=this.referenceController!.signal;
+    const byFile=new Map<string,Question[]>();for(const file of task.files){const saved=task.config.questions.filter(q=>q.referenceSources?.some(s=>s.fileId===file.id));if(saved.length)byFile.set(file.id,structuredClone(saved));}const signal=this.referenceController!.signal;
     const save=()=>{task.committedCny=this.outstanding(task.id).reduce((n,c)=>n+committed(c),0);if(!this.closed)this.store.putAi('reference_tasks',task);};
     try{
       for(const plan of p.plans){

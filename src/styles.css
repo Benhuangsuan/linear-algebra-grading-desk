@@ -29,6 +29,7 @@
 .import-summary p:last-child{margin-bottom:0}
 .import-existing{padding:10px 0;border-top:1px solid #e5eddc}
 .candidate-list h3{font-size:14px;margin-top:16px}
+.reference-result-details{overflow-wrap:anywhere}.reference-result-details p{white-space:pre-wrap}
 
 /* High-frequency controls share readable type; source fields override the generic sibling margin. */
 :root{--muted:#64725e}

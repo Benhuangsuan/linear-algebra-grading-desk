@@ -1,7 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {once} from 'node:events';
 import {createApp} from '../server/app.js';import {testDirectory,syntheticPdf} from './fixtures.js';import {styledReference} from './reference-fixtures.js';
 import {courseConfig,parseCourseMaterials} from '../shared/course.js';import {questionKey,type Assignment,type StoredFile,type State} from '../shared/domain.js';
-import type {ReferenceTask} from '../shared/reference-task.js';import {referenceFacts,referenceBatchCandidate,personalInformation} from '../server/ai/reference-batch.js';
+import type {ReferenceTask} from '../shared/reference-task.js';import {referenceFacts,referenceBatchCandidate,checkReferenceCompleteness,personalInformation} from '../server/ai/reference-batch.js';
 import {parseReferenceMaterials} from '../server/reference-parser.js';import type {AiCall} from '../shared/ai.js';
 
 import {batchResponse} from './reference-batch-fixtures.js';
@@ -58,4 +58,22 @@ test('原文其他题组也保留独立身份；全部批改声明优先且无�
  const [q]=referenceBatchCandidate(JSON.stringify(raw),file,[1]);assert.equal(q.allGraded,true);assert.equal(q.type,'graded');assert.equal(q.group,'课堂题');assert.equal(parseReferenceMaterials([file],'').questions[0].group,'课堂题');
  const inherited=referenceBatchCandidate(JSON.stringify({...raw,questions:[{...raw.questions[0],children:[{label:'a',prompt:'Synthetic child',answer:'Synthetic child answer'}]}]}),file,[1])[0];assert.deepEqual(inherited.children?.[0].referenceSources,inherited.referenceSources);
  const unknown={...file,text:'补充章第7节\n课堂题答案：\n3. Synthetic prompt\nSynthetic answer'};assert.equal(referenceBatchCandidate(JSON.stringify(raw),unknown,[1])[0].typeConfirmed,false);
+});
+test('无题干的仅完成题允许已知题型别名，正确性题、带内容或小问仍严格拒绝',()=>{
+ const file={id:'synthetic-alias',name:'4.1.pdf',text:'习题4.1 参考答案\n注：奇数题仅检查完成，偶数题需批改。\n奇数题：\n题目1'} as StoredFile;
+ const item={section:'4.1',number:'1',type:'completion_only',typeEvidence:'原文仅检查完成',excerpt:'题目1',prompt:'',answer:'',kind:'completion',children:[],sources:[{page:1,graphic:false}],reviewReasons:[]};
+ const raw=(q:unknown)=>JSON.stringify({processedPages:[1],questions:[q]});const [q]=referenceBatchCandidate(raw(item),file,[1]);assert.equal(q.type,'completion_only');assert.equal(q.kind,'solution');assert.equal(q.errorPenalty,0);assert.equal(q.prompt,'');assert.equal(q.answer,'');assert.match(q.parseWarning!,/题型未细分/);const {children:_children,...withoutChildren}=item;assert.equal(referenceBatchCandidate(raw(withoutChildren),file,[1])[0].children?.length,0);
+ for(const bad of [{...item,type:'graded'},{...item,prompt:'Unexpected content'},{...item,children:[{label:'a',prompt:'',answer:''}]},{...item,kind:'unrecognized'}])assert.throws(()=>referenceBatchCandidate(raw(bad),file,[1]));
+});
+test('明确续验时保留已通过的文件草稿和费用，只处理尚未发送的计划，不自动重试',async()=>{
+ const h=await harness();try{const quoted=await(h.runtime.ai as any).prepareReferenceBatch(h.a.id,h.options);const savedFile=h.runtime.store.get<StoredFile>('files',h.files[0].id)!;const savedQuestions=referenceBatchCandidate(JSON.stringify(batchResponse(savedFile,[1,2])),savedFile,[1,2]);
+ const task:ReferenceTask={id:'reference-resume-fixture',assignmentId:h.a.id,version:h.a.version,provider:'deepseek',status:'running',createdAt:new Date().toISOString(),error:'',warnings:[],config:{...courseConfig(),questions:savedQuestions},estimatedCny:quoted.estimatedCny,totalBudget:2,committedCny:0,files:h.files.map((f,i)=>({id:f.id,name:f.name,pages:f.pages!,processedPages:i===0?[1,2]:[],status:i===0?'completed':'waiting'}))};
+ h.runtime.store.putAi('reference_tasks',task);(h.runtime.ai as any).referenceParsing=true;(h.runtime.ai as any).referenceController=new AbortController();await(h.runtime.ai as any).runReferenceTask(task,{...quoted,plans:quoted.plans.filter((p:any)=>p.file.id!==savedFile.id)});
+ const final=h.runtime.store.get<ReferenceTask>('reference_tasks',task.id)!;assert.equal(final.status,'completed',final.error);assert.equal(final.config.questions.length,10);assert.equal(h.count,1);assert.deepEqual(final.config.questions.slice(0,savedQuestions.length),savedQuestions);assert.equal(h.runtime.store.all('ai_calls').length,1);
+ }finally{await h.close();}
+});
+test('未写空小问列表可规范化；原页明确的小问仍须通过完整性检查',async()=>{
+ const h=await harness();try{const file=h.files[0],raw=batchResponse(file,[1,2]);const omitted={...raw,questions:raw.questions.map(({children,...rest})=>rest)};const questions=referenceBatchCandidate(JSON.stringify(omitted),file,[1,2]);assert.ok(questions.every(q=>q.children?.length===0));assert.throws(()=>checkReferenceCompleteness(file,questions),/小问/);
+ const singleFile=h.files[1],single=batchResponse(singleFile,[1]);const noChildren={...single,questions:single.questions.map(({children,...rest})=>rest)};const simple=referenceBatchCandidate(JSON.stringify(noChildren),singleFile,[1]);assert.equal(simple.length,3);assert.doesNotThrow(()=>checkReferenceCompleteness(singleFile,simple));
+ }finally{await h.close();}
 });
