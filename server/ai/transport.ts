@@ -5,10 +5,15 @@ export type Message={role:'system'|'user';content:string|Content[]};
 export type TransportResult={content:string;model:string;usage:unknown;finish:string;httpStatus:number;reasoningCharacters:number};
 export type Fetch=typeof fetch;
 const wire=z.object({model:z.string().optional(),usage:z.unknown().optional(),choices:z.array(z.object({message:z.object({content:z.string(),reasoning_content:z.string().nullable().optional()}),finish_reason:z.string().nullable()}))});
+export const MAX_REQUEST_BYTES=46*1024*1024;
+export function requestBody(c:ProviderConfig,messages:Message[]){return {model:c.model,messages,stream:true,stream_options:{include_usage:true},max_tokens:c.maxOutput,
+  response_format:{type:'json_object'},...(c.id==='deepseek'?{thinking:{type:'enabled'},reasoning_effort:'high'}:{enable_thinking:true,vl_high_resolution_images:true})};}
+export function requestBytes(c:ProviderConfig,messages:Message[]){return Buffer.byteLength(JSON.stringify(requestBody(c,messages)));}
 export function assertRequestLimits(c:ProviderConfig,messages:Message[]){
   const imageCount=messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(p=>p.type==='image_url').length:0),0);
-  if(c.id==='deepseek'&&imageCount>600)throw new AiError('input_limit','本次图像数量超过服务商上限，请减少同批参考材料或本地分段导出；未发送请求',false,{stage:'prepare'});
-  if(Buffer.byteLength(JSON.stringify(messages))+1024>46*1024*1024)throw new AiError('input_limit','本次完整图像超过请求大小上限，请本地分段导出；未删页、未发送请求',false,{stage:'prepare'});
+  if(c.id==='deepseek'&&imageCount>600)throw new AiError('input_limit','单次图像数量超过服务商上限；未发送请求，请重新预估或人工核对，未处理页面不会视为漏做',false,{stage:'prepare'});
+  for(const m of messages)if(Array.isArray(m.content))for(const p of m.content)if(p.type==='image_url'&&Buffer.byteLength(p.image_url.url)>(c.id==='qwen'?20_000_000:42*1024*1024))throw new AiError('image_limit','单幅图像编码后仍然过大，未发送请求；请核对原页或人工评分，不会视为漏做',false,{stage:'prepare'});
+  if(requestBytes(c,messages)>MAX_REQUEST_BYTES)throw new AiError('request_size','本次图像请求超过安全大小，未发送请求；请重新预估以自动分批，未处理页面不会视为漏做',false,{stage:'prepare'});
 }
 export function scrub(text:string,key:string){return key?text.replaceAll(key,'[密钥已隐藏]'):text;}
 function safeUsage(value:unknown,key:string):unknown {
@@ -19,10 +24,7 @@ export async function complete(c:ProviderConfig,messages:Message[],fetcher:Fetch
   if(!c.enabled)throw new AiError('disabled','真实 API 尚未启用；请先配置 AI_ALLOW_PAID 并获得调用授权');
   if(!c.key)throw new AiError('missing_key','未检测到 '+(c.id==='deepseek'?'DEEPSEEK_API_KEY':'DASHSCOPE_API_KEY'));
   assertRequestLimits(c,messages);
-  const body={model:c.model,messages,stream:true,stream_options:{include_usage:true},max_tokens:c.maxOutput,
-    response_format:{type:'json_object'},...(c.id==='deepseek'?{thinking:{type:'enabled'},reasoning_effort:'high'}:{enable_thinking:true,vl_high_resolution_images:true})};
-  const encoded=JSON.stringify(body);
-  if(Buffer.byteLength(encoded)>46*1024*1024)throw new AiError('input_limit','页面图像超过请求大小上限；没有删页或降清晰度，请改用人工或拆分作业');
+  const encoded=JSON.stringify(requestBody(c,messages));
   let response:Response;
   const timeout=AbortSignal.timeout(c.timeout);
   try{response=await fetcher(c.endpoint+'/chat/completions',{method:'POST',headers:{Authorization:'Bearer '+c.key,'Content-Type':'application/json'},body:encoded,signal:AbortSignal.any([timeout,...(signal?[signal]:[])]),redirect:'error'});}

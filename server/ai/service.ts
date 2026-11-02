@@ -9,7 +9,9 @@ import type {Store} from '../store.js';
 import {providerConfig,safeStatus,priceFor,AiError,type Env,type ProviderConfig} from './config.js';
 import {renderPdf,hash,RENDER_VERSION,type PageImage} from './pdf.js';
 import {messagesFor,PROMPT_VERSION} from './prompt.js';
-import {complete,assertRequestLimits,type Fetch,type Message,type TransportResult} from './transport.js';
+import {complete,assertRequestLimits,requestBytes,type Fetch,type Message,type TransportResult} from './transport.js';
+import {planGrading} from './grading-plan.js';
+import {recoveryKey,findRun,createRun,runCosts,estimatePlan,gradeBatches,type GradingRun} from './grading-recovery.js';
 import {estimateInput,cost,accounting,committed} from './budget.js';
 import {validateVision} from './validate.js';
 import {hasFormalResult} from '../../shared/submission-state.js';
@@ -23,7 +25,7 @@ import {gradingBlockers} from '../../shared/ai-readiness.js';
 
 type Cache={id:string;grade:Grade;at:string};
 type Prepared={assignment:Assignment;config:Config;student:PageImage[];references:{id:string;sourceFileId?:string;images:PageImage[]}[];key:string;bytes:Buffer;studentPages:number};
-export type AiDependencies={fetcher?:Fetch;env?:Env};
+export type AiDependencies={fetcher?:Fetch;env?:Env;requestLimitBytes?:number};
 type Save=(s:Submission,action:string)=>Submission;
 export class AiService {
   private closed=false;
@@ -69,24 +71,25 @@ export class AiService {
       if(f.mime!=='application/pdf')continue; // original DOCX remains available in the existing UI.
       if(!/^[a-f0-9-]+\.pdf$/.test(f.diskName))throw new AiError('file','参考材料路径无效');
       const bytes=await readFile(join(this.store.uploads,f.diskName));refHashes.push(hash(bytes));
-      references.push({id:'reference-'+String(references.length+1),sourceFileId:f.id,images:await renderPdf(bytes,cacheRoot,undefined,renderOptions)});
+      references.push({id:'reference-'+String(references.length+1),sourceFileId:f.id,images:await renderPdf(bytes,cacheRoot,undefined,{...renderOptions,expectedPages:f.pages??undefined})});
     }
     if(!references.length&&allFiles.some(f=>f.kind!=='student'&&f.mime!=='application/pdf'))throw new AiError('file','请补充 PDF 版参考材料，DOCX 原件已保留；真实批改不使用可能丢失公式的文本预览');
     if(!references.length&&config.questions.some(q=>q.type==='graded'&&!q.answer.trim()))throw new AiError('reference','需要 PDF 参考答案或已确认的完整参考解');
     const bytes=await readFile(join(this.store.uploads,file.diskName));
-    const student=await renderPdf(bytes,cacheRoot,undefined,renderOptions);const studentPages=Math.max(...student.map(p=>p.page));
-    const key=hash(JSON.stringify({student:hash(bytes),submission:s.id,version:assignment.version,config,refHashes,provider:id,model:c.model,prompt:PROMPT_VERSION,renderer:RENDER_VERSION,scale:3,maxOutput:c.maxOutput}));
+    const student=await renderPdf(bytes,cacheRoot,undefined,{...renderOptions,expectedPages:file.pages??undefined});const studentPages=file.pages??Math.max(...student.map(p=>p.page));
+    const key=hash(JSON.stringify({student:hash(bytes),submission:s.id,version:assignment.version,config,refHashes,provider:id,model:c.model,prompt:PROMPT_VERSION,renderer:RENDER_VERSION,maxOutput:c.maxOutput}));
     return {assignment,config,student,references,key,bytes,studentPages};
   }
   private outstanding(id:string){return this.store.all<AiCall>('ai_calls').filter(c=>c.batchId===id);}
-  private async call(c:ProviderConfig,messages:Message[],info:{batchId:string;submissionId:string;assignmentId:string;version:number;pages:number;purpose:AiCall['purpose'];attempt:number},per:number,total:number,signal?:AbortSignal,reference?:{resultId:string;fileId:string;fileHash:string;sections:string[];pages:number[]}){
+  private async call(c:ProviderConfig,messages:Message[],info:{batchId:string;submissionId:string;assignmentId:string;version:number;pages:number;purpose:AiCall['purpose'];attempt:number;runId?:string;partId?:string},per:number,total:number,signal?:AbortSignal,reference?:{resultId:string;fileId:string;fileHash:string;sections:string[];pages:number[]},retain?:(result:TransportResult&{callId:string})=>void){
     if(this.closed||signal?.aborted)throw new AiError('cancelled','任务已停止');
     assertRequestLimits(c,messages);const input=estimateInput(c,messages);
     if(input+c.maxOutput>980000)throw new AiError('input_limit','输入超过模型安全上下文限制；未省略页面');
     const price=priceFor(c,input);const reserve=cost(price,input,c.maxOutput);
-    const prior=this.outstanding(info.batchId);
+    const runIds=new Set([...(this.store.get<AiBatch>('ai_batches',info.batchId)?.recoveryRunIds??[]),...(info.runId?[info.runId]:[])]);
+    const prior=[...new Map([...this.outstanding(info.batchId),...this.store.all<AiCall>('ai_calls').filter(x=>x.runId&&runIds.has(x.runId))].map(x=>[x.id,x])).values()];
     if(prior.filter(x=>x.submissionId===info.submissionId).reduce((a,b)=>a+committed(b),0)+reserve>per+1e-8||prior.reduce((a,b)=>a+committed(b),0)+reserve>total+1e-8)throw new AiError('budget','下一次调用可能超出预算，已停止；现有结果与未知用量预留均保留');
-    const record:AiCall={id:randomUUID(),...info,provider:c.id,model:c.model,at:new Date().toISOString(),status:'reserved',reservedCny:reserve,estimatedCny:null,inputTokens:null,outputTokens:null,cacheHitTokens:null,usage:null,price,error:'',diagnostic:{maxOutputTokens:c.maxOutput,stage:'request',inputImages:messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(p=>p.type==='image_url').length:0),0)}};
+    const record:AiCall={id:randomUUID(),...info,provider:c.id,model:c.model,at:new Date().toISOString(),status:'reserved',reservedCny:reserve,estimatedCny:null,inputTokens:null,outputTokens:null,cacheHitTokens:null,usage:null,price,error:'',diagnostic:{maxOutputTokens:c.maxOutput,stage:'request',requestBytes:requestBytes(c,messages),inputImages:messages.reduce((n,m)=>n+(Array.isArray(m.content)?m.content.filter(p=>p.type==='image_url').length:0),0)}};
     this.store.putAi('ai_calls',record);
     if(reference){const entry=this.store.get<ReferenceResult>('reference_results',reference.resultId);if(entry){entry.callIds=[...new Set([...entry.callIds,record.id])];this.referenceLibrary.update(entry);}}
     try{
@@ -95,7 +98,7 @@ export class AiService {
       if(reference&&info.purpose==='reference_parse')this.referenceLibrary.retain({id:record.id,taskId:info.batchId,assignmentId:info.assignmentId,...reference,promptVersion:REFERENCE_PROMPT_VERSION,model:result.model,finish:result.finish,createdAt:new Date().toISOString(),content:result.content});
       const finishReason=['stop','length','content_filter','tool_calls','function_call'].includes(result.finish)?result.finish:result.finish?'other':'missing';
       const settled={...record,...accounting(result.usage,price),model:result.model,status:'success' as const,diagnostic:{...record.diagnostic,httpStatus:result.httpStatus,finishReason,stage:'completion' as const,responseCharacters:result.content.length,reasoningCharacters:result.reasoningCharacters,reasoningTokens:reportedReasoningTokens(result.usage)}};
-      this.store.putAi('ai_calls',settled);
+      this.store.transaction(()=>{this.store.putAi('ai_calls',settled);retain?.({...result,callId:record.id});});
       if(result.finish!=='stop')throw new AiError(result.finish==='length'?'output_limit':'incomplete_response',result.finish==='length'?(info.purpose==='reference_parse'?'这份参考答案耗尽了本次输出额度（包含思考），未得到完整结果。已完成文件仍可使用；请核对原页或重新预估后单独重试，不会自动增加额度或重复收费。':'模型耗尽本次 '+c.maxOutput+' token 输出额度（含思考与评分）。请在批改选项提高额度后重新预估，或人工处理；原样重试仍可能失败，未自动重试。已有用量保留。'):'模型未正常结束，未保存不完整结果；请查看批次诊断后明确重试或人工处理。',false,{stage:'completion'});
       return {...result,callId:record.id};
     }catch(e){
@@ -237,19 +240,19 @@ export class AiService {
     const prepared=[];const bindings:unknown[]=[];let total=0;
     for(const s of selected){
       if(!s)continue;if(s.status==='confirmed'||['queued','processing'].includes(s.status))throw new AiError('protected','已确认或正在处理的作业不能重批');
-      const p=await this.prepare(s,options.provider,c.maxOutput);const messages=messagesFor(p.config,p.references,p.student,s.id);assertRequestLimits(c,messages);
+      const p=await this.prepare(s,options.provider,c.maxOutput);const plan=planGrading(c,p.config,p.references,p.student,s.id,this.deps.requestLimitBytes),run=plan.direct?undefined:findRun(this.store,recoveryKey(p.key,plan));
       if(p.assignment.version!==assignment.version)throw new AiError('version','规则已变化，请重新预估');
-      bindings.push({id:s.id,revision:s.revision,status:s.status,key:p.key,model:c.model,price:priceFor(c,0),maxOutput:c.maxOutput});
+      bindings.push({id:s.id,revision:s.revision,status:s.status,key:p.key,model:c.model,price:priceFor(c,0),maxOutput:c.maxOutput,run:run?.id,parts:run?hash(JSON.stringify(run.parts)):undefined,limit:plan.limit});
       const reuseExisting=!options.regrade&&s.grade?.provider===options.provider&&typeof s.grade.raw==='object'&&s.grade.raw!==null&&'cacheKey'in s.grade.raw&&s.grade.raw.cacheKey===p.key;
       if(hasFormalResult(s)&&!options.regrade&&!reuseExisting)throw new AiError('protected','已有正式批改结果；如需再次调用，请明确选择重新批改');
       const cached=!!reuseExisting||!options.regrade&&!!this.validCache(p.key);
-      const estimate=cached?0:cost(priceFor(c,0),estimateInput(c,messages),c.maxOutput);
-      total+=estimate;prepared.push({submissionId:s.id,pages:p.studentPages,imageCount:p.student.length,units:p.config.questions.length,estimatedCny:estimate,cached,reuseExisting:!!reuseExisting});
+      const estimation=estimatePlan(this.store,c,p.config,plan,run),estimate=cached?0:estimation.estimatedCny;
+      total+=estimate;prepared.push({submissionId:s.id,pages:p.studentPages,imageCount:p.student.length,units:p.config.questions.length,estimatedCny:estimate,cached,reuseExisting:!!reuseExisting,imageBatches:plan.direct?1:plan.chunks.length,maxGradingRequests:plan.direct?1:p.config.questions.length,reusedBatches:estimation.reused,priorCny:estimation.priorCny,recoveryRunId:run?.id});
     }
     const ignored=this.store.all<StoredFile>('files').filter(f=>f.assignmentId===assignmentId&&f.kind!=='student'&&f.mime!=='application/pdf').length;
     if(this.store.get<Assignment>('assignments',assignmentId)?.version!==assignment.version||selected.some(s=>s&&JSON.stringify(this.store.get<Submission>('submissions',s.id))!==JSON.stringify(s)))throw new AiError('version','预估期间记录已变化，请重新预估');
     const previewToken=hash(JSON.stringify({assignmentId,version:assignment.version,bindings,prepared,provider:options.provider,regrade:options.regrade,per:options.perSubmissionBudget,total:options.totalBudget}));
-    return {previewToken,configVersion:assignment.version,maxOutputTokens:c.maxOutput,items:prepared,estimatedCny:total,warning:total>=.3||prepared.some(p=>p.estimatedCny>=.3),targetCny:.1,perSubmissionBudget:options.perSubmissionBudget,totalBudget:options.totalBudget,warnings:[...(ignored?[String(ignored)+' 份 DOCX 不发送云端；请确认其对应 PDF 已完整提供']:[]),...prepared.flatMap((p,i)=>p.imageCount>p.pages?['所选第 '+(i+1)+' 份含长页或大页：'+p.pages+' 个原页已本地整理为 '+p.imageCount+' 幅全景/分区，原页码保留；费用预估已含全部图像。']:[])]};
+    return {previewToken,configVersion:assignment.version,maxOutputTokens:c.maxOutput,items:prepared,estimatedCny:total,warning:total>=.3||prepared.some(p=>p.estimatedCny>=.3),targetCny:.1,perSubmissionBudget:options.perSubmissionBudget,totalBudget:options.totalBudget,warnings:[...(ignored?[String(ignored)+' 份 DOCX 不发送云端；请确认其对应 PDF 已完整提供']:[]),...prepared.flatMap((p,i)=>p.imageBatches>1?['所选第 '+(i+1)+' 份共 '+p.pages+' 页，已优化为 '+p.imageBatches+' 批识别，全部完成后最多 '+p.maxGradingRequests+' 次汇总评分；费用预估已含全部步骤。'+(p.reusedBatches?'将复用已成功的 '+p.reusedBatches+' 批；估算包含此前费用及未知用量预留。':'')]:p.imageCount>p.pages?['所选第 '+(i+1)+' 份含长页或大页：'+p.pages+' 个原页已本地整理为 '+p.imageCount+' 幅全景/分区，原页码保留；费用预估已含全部图像。']:[])]};
   }
   private validCache(key:string){
     const cached=this.store.get<Cache>('ai_cache',key);
@@ -276,13 +279,22 @@ export class AiService {
     if(a.archived)throw new AiError('protected','请先取消归档');
     // Recheck after rendering/awaits, so concurrent duplicate HTTP requests cannot both queue.
     if(this.store.all<AiBatch>('ai_batches').some(b=>['running','paused'].includes(b.status)&&b.items.some(i=>options.ids.includes(i.submissionId)&&['queued','processing'].includes(i.state))))throw new AiError('duplicate','这些作业已有任务');
-    const at=new Date().toISOString();const batch:AiBatch={id:randomUUID(),assignmentId,provider:options.provider,options:{...options,maxOutputTokens:preview.maxOutputTokens},configVersion:a.version,status:preview.items.every(i=>i.reuseExisting)?'completed':'running',items:preview.items.map(i=>({submissionId:i.submissionId,state:i.reuseExisting?'completed':'queued',error:''})),createdAt:at,updatedAt:at};
+    const at=new Date().toISOString();const batch:AiBatch={id:randomUUID(),assignmentId,provider:options.provider,options:{...options,maxOutputTokens:preview.maxOutputTokens},configVersion:a.version,recoveryRunIds:preview.items.flatMap(i=>i.recoveryRunId?[i.recoveryRunId]:[]),status:preview.items.every(i=>i.reuseExisting)?'completed':'running',items:preview.items.map(i=>({submissionId:i.submissionId,state:i.reuseExisting?'completed':'queued',error:''})),createdAt:at,updatedAt:at};
     this.store.transaction(()=>{this.store.putAi('ai_batches',batch);for(const item of batch.items.filter(i=>i.state==='queued')){const s=this.store.get<Submission>('submissions',item.submissionId)!;if(s.status==='confirmed'||['queued','processing'].includes(s.status))throw new AiError('protected','记录已更新，不能覆盖');this.save({...s,status:'queued',error:''},'明确授权视觉批改排队');}});
     void this.drain();return {batchId:batch.id,...preview};
   }
   private async grade(p:Prepared,s:Submission,b:AiBatch,signal:AbortSignal):Promise<Grade>{
     const cached=!b.options.regrade&&this.validCache(p.key);if(cached)return cached.grade;
     const c={...this.requireConfig(b.provider),maxOutput:b.options.maxOutputTokens??8192};let result;let attempt=0;
+    const plan=planGrading(c,p.config,p.references,p.student,s.id,this.deps.requestLimitBytes);
+    if(!plan.direct){
+      const key=recoveryKey(p.key,plan),run=findRun(this.store,key)??createRun(key,s.id,p.assignment.id);this.store.putAi('grading_runs',run);
+      const grade=await gradeBatches(this.store,c,p.config,p.references,plan,run,s.id,p.studentPages,(messages,partId,purpose,pages,retain)=>{
+        if(this.store.get<AiBatch>('ai_batches',b.id)?.status==='paused')throw new AiError('paused','已暂停后续调用，成功批次已保留；点击“继续批次”后续跑，不会把未处理页面视为漏做');
+        return this.call(c,messages,{batchId:b.id,submissionId:s.id,assignmentId:p.assignment.id,version:p.assignment.version,pages,purpose,attempt:runCosts(this.store,run).filter(x=>x.partId===partId).length+1,runId:run.id,partId},b.options.perSubmissionBudget,b.options.totalBudget,signal,undefined,retain);
+      });
+      return {...grade,version:p.assignment.version,raw:{...(grade.raw as object),cacheKey:p.key}};
+    }
     for(;;){
       try{attempt++;result=await this.call(c,messagesFor(p.config,p.references,p.student,s.id),{batchId:b.id,submissionId:s.id,assignmentId:p.assignment.id,version:p.assignment.version,pages:p.studentPages,purpose:'grade',attempt},b.options.perSubmissionBudget,b.options.totalBudget,signal);break;}
       catch(e){if(!(e instanceof AiError)||!e.retryable||attempt>c.retries||signal.aborted)throw e;await new Promise(r=>setTimeout(r,250*attempt));}
@@ -321,12 +333,12 @@ export class AiService {
           if(this.controller.signal.aborted)throw new AiError('cancelled','批次已取消，未覆盖既有结果');
           const current=this.store.get<Submission>('submissions',s.id);
           stage='save';
-          if(current&&current.status!=='confirmed')this.save({...current,status:'review',grade,review:structuredClone(grade.rows),error:''},'保存真实视觉建议（仍需人工确认）');
+          if(current&&current.status!=='confirmed')this.store.transaction(()=>{this.save({...current,status:'review',grade,review:structuredClone(grade.rows),error:''},'保存真实视觉建议（仍需人工确认）');const raw=grade.raw as {evidenceRunId?:string}|null;if(raw?.evidenceRunId){const run=this.store.get<GradingRun>('grading_runs',raw.evidenceRunId);if(run)this.store.putAi('grading_runs',{...run,status:'complete'});}});
           item.state='completed';
         }catch(e){
-          if(this.closed)break;item.state='failed';item.error=e instanceof AiError?e.message:'处理失败，请检查 PDF 和规则后重试';
+          if(this.closed)break;const paused=e instanceof AiError&&e.code==='paused';item.state=paused?'queued':'failed';item.error=e instanceof AiError?e.message:'处理失败，请检查 PDF 和规则后重试';
           item.failure=e instanceof AiError?{stage,...e.diagnostic,code:e.code,retryable:e.retryable}:{stage,code:'internal',retryable:false};
-          const current=this.store.get<Submission>('submissions',s.id);if(current&&current.status!=='confirmed')this.save({...current,status:current.grade?'review':'failed',error:item.error},'视觉处理失败，保留已有结果');
+          const current=this.store.get<Submission>('submissions',s.id);if(current&&current.status!=='confirmed')this.save({...current,status:paused?'queued':current.grade?'review':'failed',error:item.error},paused?'暂停分批处理，保留成功证据':'视觉处理失败，保留已有结果');
         }
         if(this.closed)break;
         const fresh=this.store.get<AiBatch>('ai_batches',b.id)!;fresh.items[index]=item;
