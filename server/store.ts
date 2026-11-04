@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import type { Assignment, Course, StoredFile, Submission, History, State } from '../shared/domain.js';
 
 type Entity = Course | Assignment | StoredFile | Submission | History;
-type AiTable='ai_batches'|'ai_calls'|'ai_cache'|'reference_tasks'|'reference_results'|'reference_responses'|'grading_runs';
+type AiTable='ai_batches'|'ai_calls'|'ai_cache'|'reference_tasks'|'reference_results'|'reference_responses'|'grading_runs'|'explanations';
 type Table = 'courses'|'assignments'|'files'|'submissions'|'history'|'versions'|AiTable;
 export class Store {
   private transactionDepth=0;
@@ -30,6 +30,7 @@ export class Store {
       CREATE INDEX IF NOT EXISTS history_submission ON history(submission_id);`);
     this.db.exec('CREATE TABLE IF NOT EXISTS ai_batches(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_calls(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS ai_cache(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS reference_tasks(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
     this.db.exec('CREATE TABLE IF NOT EXISTS reference_results(id TEXT PRIMARY KEY,payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS reference_responses(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
+    this.db.exec('CREATE TABLE IF NOT EXISTS explanations(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
     this.db.exec('CREATE TABLE IF NOT EXISTS grading_runs(id TEXT PRIMARY KEY,payload TEXT NOT NULL);');
     for (const s of this.all<Submission>('submissions').filter(s=>['queued','processing'].includes(s.status))) {
       this.put('submissions',{...s,status:'failed',error:'上次退出时任务未完成，可单独重试。',revision:s.revision+1});
@@ -45,7 +46,9 @@ export class Store {
     if (table==='history' && 'submissionId' in entity) {cols.push('submission_id'); vals.push(String(entity.submissionId));}
     this.db.prepare(`INSERT INTO ${table} (${cols.join(',')}) VALUES (${cols.map(()=>'?').join(',')}) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload`).run(...vals);
   }
-  delete(table:Table,id:string) { this.db.prepare(`DELETE FROM ${table} WHERE id=?`).run(id); }
+  delete(table:Table,id:string) {
+    const ids=new Set(table==='submissions'?[id]:this.all<Submission>('submissions').filter(s=>table==='files'?s.fileId===id:table==='assignments'?s.assignmentId===id:table==='courses'?this.get<Assignment>('assignments',s.assignmentId)?.courseId===id:false).map(s=>s.id));
+    for(const chat of this.all<{id:string;submissionId:string}>('explanations'))if(ids.has(chat.submissionId))this.db.prepare('DELETE FROM explanations WHERE id=?').run(chat.id); this.db.prepare(`DELETE FROM ${table} WHERE id=?`).run(id); }
   transaction<T>(fn:()=>T):T {if(this.transactionDepth)return fn();this.db.exec('BEGIN IMMEDIATE');this.transactionDepth++;try {const result=fn();this.db.exec('COMMIT');return result;}catch(e){this.db.exec('ROLLBACK');throw e;}finally{this.transactionDepth--;}}
   history(s:Submission,action:string) {this.put('history',{id:randomUUID(),submissionId:s.id,action,at:new Date().toISOString(),snapshot:s});}
   state():State {return {courses:this.all('courses'),assignments:this.all('assignments'),files:this.all('files'),submissions:this.all('submissions'),provider:'mock'};}

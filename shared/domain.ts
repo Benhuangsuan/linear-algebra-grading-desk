@@ -73,6 +73,7 @@ export const judgmentSchema = z.object({
   pages: z.array(z.number().int().positive()).max(100), needsReview: z.boolean(), reviewed: z.boolean(),
   errorCount: z.number().int().min(1).max(100).optional(),
   reviewReason: z.string().max(1000).optional(),
+  teacherNote: z.string().trim().max(2000).optional(),
 });
 export type Judgment = z.infer<typeof judgmentSchema>;
 export type Grade = { provider: 'mock' | 'manual' | 'deepseek' | 'qwen'; model: string; at: string; version: number; config: Config; rows: Judgment[]; raw: unknown };
@@ -153,7 +154,7 @@ export function reportFor(s: Pick<Submission,'grade'|'review'|'status'>): string
   const ai=summarize(config,rows); const final=summarize(config,s.review??rows);
   const details=deductionRows(config,s.review??rows).filter(r=>r.deduction && r.deduction>0).map(r=>`${r.key}：扣 ${r.deduction} 分，${r.reason}`).join('\n');
   const pending=(s.review??rows).filter(r=>r.needsReview || !r.reviewed || r.deduction===null).length;
-  return `${provider==='mock'?'【模拟评分，未识别或批改 PDF】':provider==='manual'?'【纯人工评分】':'【'+provider+' 视觉建议，需人工确认】'}\n满分：${config.total}\n${provider!=='manual'?`建议总分：${ai.score??'待确定'}`:'无 AI 建议'}\n人工最终总分：${s.status==='confirmed'?final.score:'待确认'}（当前未确认成绩：${final.score??'待确定'}）\n${details||'暂无已确定的扣分条目。'}${pending?`\n需复核：${pending} 项。`:''}`;
+  return `${provider==='mock'?'【模拟评分，未识别或批改 PDF】':provider==='manual'?'【纯人工评分】':'【'+provider+' 视觉建议，需人工确认】'}\n满分：${config.total}\n${provider!=='manual'?`建议总分：${ai.score??'待确定'}`:'无 AI 建议'}\n人工最终总分：${s.status==='confirmed'?final.score:'待确认'}（当前未确认成绩：${final.score??'待确定'}）\n${details||'暂无已确定的扣分条目。'}${(s.review??rows).filter(r=>r.teacherNote?.trim()).map(r=>`\n${r.key}：助教备注（不扣分）：${r.teacherNote}`).join('')}${pending?`\n需复核：${pending} 项。`:''}`;
 }
 
 /** A whole question missing across several configured subparts is charged once. */

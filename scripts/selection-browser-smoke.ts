@@ -29,9 +29,9 @@ const state=()=>request<State>('/state');
 const rows=page.getByTestId('submission-row');const row=(name:string)=>rows.filter({has:page.locator('.submission-name strong',{hasText:new RegExp('^'+name+'$')})});
 const dialog=page.getByRole('dialog');
 async function authorize(){await page.getByLabel('已核对本次计分题目与扣分规则').check();await page.getByLabel('学生与参考 PDF 页面已去除姓名、学号等身份信息').check();await page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用').check();}
-async function preview(count:number){await authorize();await page.getByRole('button',{name:'预估费用',exact:true}).click();await expect(dialog).toContainText('已预估 '+count+' 份');const warning=page.getByLabel('估算达到 ¥0.30，我已查看预算并确认继续');if(await warning.isVisible())await warning.check();}
+async function preview(count:number){await authorize();await page.getByRole('button',{name:'快速检查',exact:true}).click();await expect(dialog).toContainText('已检查 '+count+'/'+count+' 份');}
 async function close(){await dialog.getByRole('button',{name:'关闭',exact:true}).last().click();}
-async function start(){await page.getByRole('button',{name:'开始真实批改',exact:true}).click();await expect(dialog).toContainText('已安排所选学生的批改');}
+async function start(){await page.getByRole('button',{name:'开始 AI 批改',exact:true}).click();await expect(dialog).toContainText('已安排所选学生的批改');}
 async function focusSync(){await page.evaluate(()=>window.dispatchEvent(new Event('focus')));}
 async function done(id:string){await expect.poll(async()=>(await state()).submissions.find(s=>s.id===id)?.grade?.provider).toBe('deepseek');}
 const pdf=await PDFDocument.create();pdf.addPage([300,400]).drawText('Synthetic mathematics only',{x:20,y:350});const bytes=Buffer.from(await pdf.save());
@@ -64,14 +64,14 @@ try{
   await page.getByRole('button',{name:'AI 批改已选（1）',exact:true}).click();await preview(1);await start();await done(c.id);await close();await expect(rows).toHaveCount(0);expect(calls).toEqual([a.id,b.id,c.id]);
   await page.getByLabel('筛选状态').selectOption('all');await expect(rows).toHaveCount(3);
   await row('Alpha').getByRole('button',{name:'更多操作 Alpha',exact:true}).click();await page.getByRole('button',{name:'修改评分',exact:true}).click();await page.getByRole('button',{name:'取消',exact:true}).click();
-  await row('Alpha').getByRole('button',{name:'更多操作 Alpha',exact:true}).click();await page.getByRole('button',{name:'重新 AI 批改…',exact:true}).click();await expect(dialog).toContainText('可能产生新增费用');await expect(page.getByLabel('明确忽略已有结果缓存并重批（新增费用）')).toBeChecked();await expect(page.getByRole('button',{name:'开始真实批改',exact:true})).toBeDisabled();await close();expect(calls).toHaveLength(3);
+  await row('Alpha').getByRole('button',{name:'更多操作 Alpha',exact:true}).click();await page.getByRole('button',{name:'重新 AI 批改…',exact:true}).click();await expect(dialog).toContainText('可能产生新增费用');await expect(page.getByLabel('明确忽略已有结果缓存并重批（新增费用）')).toBeChecked();await expect(page.getByRole('button',{name:'开始 AI 批改',exact:true})).toBeDisabled();await close();expect(calls).toHaveLength(3);
   // Another tab changes a selection while the dialog/old preview remains open.
   const second=await setup('2.2 stale selection');const [x,y,z]=second.ss;await page.getByRole('button',{name:'选择当前可批改项',exact:true}).click();await page.getByRole('button',{name:'AI 批改已选（3）',exact:true}).click();await preview(3);
   const other=await browser.newPage();
   const manualResponse=await other.request.post(url+'/api/submissions/'+x.id+'/manual',{data:{}});const manual:Submission=await manualResponse.json();
   const graded=manual.review!.map(r=>({...r,recognition:'found',verdict:r.type==='completion_only'?'completed':'correct',deduction:0,reason:'',pages:[1],reviewed:true,needsReview:false}));
   const confirmed=await other.request.put(url+'/api/submissions/'+x.id+'/review',{data:{revision:manual.revision,rows:graded,manualReport:'',reportBase:'',confirm:true}});expect(confirmed.ok()).toBe(true);
-  await expect(dialog).toContainText('Alpha（成绩已确认');await expect(page.locator('.selected-submissions p')).toHaveCount(2);await expect(page.getByRole('button',{name:'开始真实批改',exact:true})).toBeDisabled();await expect(page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用')).not.toBeChecked();expect(calls).toHaveLength(3);
+  await expect(dialog).toContainText('Alpha（成绩已确认');await expect(page.locator('.selected-submissions p')).toHaveCount(2);await expect(page.getByRole('button',{name:'开始 AI 批改',exact:true})).toBeDisabled();await expect(page.getByLabel('同意将本次页面图像、参考材料及规则发送给所选服务，可能产生费用')).not.toBeChecked();expect(calls).toHaveLength(3);
   await page.screenshot({path:join(dir,'dialog-invalid-removed.png'),fullPage:true});await preview(2);await start();await close();await done(y.id);await done(z.id);await expect(page.getByRole('button',{name:'AI 批改已选',exact:true})).toBeVisible();expect(calls.slice(3)).toEqual([y.id,z.id]);
   // Completed human review is not ungraded; an untouched manual placeholder is.
   await page.getByLabel('筛选状态').selectOption('ungraded');await expect(rows).toHaveCount(0);
@@ -85,7 +85,7 @@ try{
   for(const name of ['DeleteOne','DeleteTwo']){const r=await page.request.post(url+'/api/assignments/'+second.a.id+'/files',{multipart:{kind:'student',file:{name:name+'.pdf',mimeType:'application/pdf',buffer:bytes}}});expect(r.ok()).toBe(true);}
   await focusSync();await page.getByLabel('筛选状态').selectOption('ungraded');await expect(rows).toHaveCount(2);await page.getByRole('button',{name:'选择当前可批改项',exact:true}).click();await page.getByRole('button',{name:'AI 批改已选（2）',exact:true}).click();await preview(2);
   const deleting=(await state()).submissions.find(s=>s.assignmentId===second.a.id&&s.studentName==='DeleteOne')!;
-  const deleted=await page.request.delete(url+'/api/files/'+deleting.fileId);expect(deleted.ok()).toBe(true);await expect(dialog).toContainText('DeleteOne（提交已删除）');await expect(page.locator('.selected-submissions p')).toHaveCount(1);await expect(page.getByRole('button',{name:'开始真实批改',exact:true})).toBeDisabled();expect(calls).toHaveLength(5);await close();await expect(row('DeleteTwo').getByRole('checkbox')).toBeChecked();
+  const deleted=await page.request.delete(url+'/api/files/'+deleting.fileId);expect(deleted.ok()).toBe(true);await expect(dialog).toContainText('DeleteOne（提交已删除）');await expect(page.locator('.selected-submissions p')).toHaveCount(1);await expect(page.getByRole('button',{name:'开始 AI 批改',exact:true})).toBeDisabled();expect(calls).toHaveLength(5);await close();await expect(row('DeleteTwo').getByRole('checkbox')).toBeChecked();
   await page.getByRole('button',{name:'清空选择',exact:true}).click();const retained=(await state()).submissions.find(s=>s.assignmentId===second.a.id&&s.studentName==='DeleteTwo')!;await page.request.delete(url+'/api/files/'+retained.fileId);await focusSync();
   await page.getByLabel('筛选状态').selectOption('all');await row('ManualDraft').getByRole('button',{name:'更多操作 ManualDraft',exact:true}).click();await page.getByRole('button',{name:'删除作业',exact:true}).click();await expect(rows).toHaveCount(3);
   await page.reload();await expect(rows).toHaveCount(3);await expect(rows.locator('input:checked')).toHaveCount(0);

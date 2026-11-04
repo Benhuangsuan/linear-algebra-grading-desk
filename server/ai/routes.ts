@@ -9,6 +9,8 @@ export function aiRoutes(service:AiService){
     z.object({consent:z.literal(true)}).parse(req.body);
     res.json(await service.connection(providerId.parse(req.params.id)));
   });
+  router.post('/assignments/:id/ai/check',(req,res)=>res.json(service.startCheck(String(req.params.id),req.body)));
+  router.get('/assignments/:id/ai/check/:checkId',(req,res)=>res.json(service.checkResult(String(req.params.id),String(req.params.checkId))));
   router.post('/assignments/:id/ai/preview',async(req,res)=>res.json(await service.preview(String(req.params.id),req.body)));
   router.post('/assignments/:id/reference-ai/batch-preview',async(req,res)=>res.json(await service.referenceBatchPreview(String(req.params.id),req.body)));
   router.post('/assignments/:id/reference-ai/tasks',async(req,res)=>res.json(await service.startReferenceTask(String(req.params.id),req.body)));
@@ -25,5 +27,8 @@ export function aiRoutes(service:AiService){
   router.post('/assignments/:id/ai/queue',async(req,res)=>res.json(await service.enqueue(String(req.params.id),req.body)));
   router.get('/assignments/:id/ai', (req,res)=>res.json(service.overview(String(req.params.id))));
   router.post('/ai/batches/:id/control',(req,res)=>res.json(service.control(String(req.params.id),z.object({action:z.enum(['pause','resume','cancel'])}).parse(req.body).action)));
+  router.get('/submissions/:id/explanation',(req,res)=>res.json(service.explanation(String(req.params.id),z.string().max(200).parse(req.query.key))));
+  router.delete('/submissions/:id/explanation',(req,res)=>res.json(service.deleteExplanation(String(req.params.id),z.string().max(200).parse(req.query.key),z.string().max(100).optional().parse(req.query.version))));
+  router.post('/submissions/:id/explanation',async(req,res)=>res.json(await service.askExplanation(String(req.params.id),req.body)));
   return router;
 }

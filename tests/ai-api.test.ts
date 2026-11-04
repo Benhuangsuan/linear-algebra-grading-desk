@@ -61,11 +61,11 @@ test('2.4 五人批次两份额度耗尽：较大额度先预估并绑定，单�
     for(let i=1;i<=4;i++)await h.upload('student','Synthetic'+i+'.pdf',1,i===4?[816,1922.702]:[250,350]);
     const ids=(await h.request<State>('/state')).submissions.map(s=>s.id);failIds.add(ids[2]);failIds.add(ids[4]);
     const providers=await h.request<{id:string;defaultMaxOutputTokens:number}[]>('/ai/providers');assert.equal(providers.find(p=>p.id==='deepseek')?.defaultMaxOutputTokens,16384);
-    const quote=await h.request<{previewToken:string;items:{pages:number;imageCount:number}[];estimatedCny:number;maxOutputTokens:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,ids,maxOutputTokens:8192});assert.equal(quote.items[4].pages,1);assert.equal(quote.items[4].imageCount,3);
+    const quote=await h.request<{previewToken:string;items:{pages:number;imageCount:number}[];firstReserveCny:number;maxOutputTokens:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,ids,maxOutputTokens:8192});assert.equal(quote.items[4].pages,1);assert.equal(quote.items[4].imageCount,3);
     await h.request('/assignments/'+h.a.id+'/ai/queue',{...h.options,ids,maxOutputTokens:8192,previewToken:quote.previewToken});const batch=await h.wait();assert.deepEqual(batch.items.map(i=>i.state),['completed','completed','failed','completed','failed']);assert.equal(seen.length,5);
     const protectedResults=ids.filter(id=>!failIds.has(id)).map(id=>h.runtime.store.get('submissions',id));const oldCalls=h.runtime.store.all<AiCall>('ai_calls');const bad=oldCalls.find(c=>c.submissionId===ids[4])!;assert.equal(bad.pages,1);assert.equal(bad.diagnostic?.responseCharacters,0);assert.ok(bad.diagnostic!.reasoningCharacters!>0);assert.ok(bad.diagnostic!.inputImages!>bad.pages);assert.ok(!JSON.stringify(oldCalls).includes('synthetic private reasoning'));
-    const options={...h.options,ids:[...failIds],regrade:true,maxOutputTokens:16384};const larger=await h.request<{previewToken:string;estimatedCny:number;maxOutputTokens:number}>('/assignments/'+h.a.id+'/ai/preview',options);assert.equal(larger.maxOutputTokens,16384);
-    const small=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...options,maxOutputTokens:8192});assert.ok(larger.estimatedCny>small.estimatedCny);
+    const options={...h.options,ids:[...failIds],regrade:true,maxOutputTokens:16384};const larger=await h.request<{previewToken:string;firstReserveCny:number;maxOutputTokens:number}>('/assignments/'+h.a.id+'/ai/preview',options);assert.equal(larger.maxOutputTokens,16384);
+    const small=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...options,maxOutputTokens:8192});assert.ok(larger.firstReserveCny>small.firstReserveCny);
     await h.request('/assignments/'+h.a.id+'/ai/queue',{...options,maxOutputTokens:32768,previewToken:larger.previewToken},'POST',400);assert.equal(seen.length,5);
     const overBudget=await h.request<{previewToken:string}>('/assignments/'+h.a.id+'/ai/preview',{...options,perSubmissionBudget:.01});await h.request('/assignments/'+h.a.id+'/ai/queue',{...options,perSubmissionBudget:.01,previewToken:overBudget.previewToken},'POST',400);assert.equal(seen.length,5);
     await h.request('/assignments/'+h.a.id+'/ai/queue',{...options,previewToken:larger.previewToken});const recovery=await h.wait();assert.equal(recovery.options.maxOutputTokens,16384);assert.ok(recovery.items.every(i=>i.state==='completed'));assert.deepEqual(seen.slice(5),[...failIds].map(id=>({id,limit:16384})));
@@ -133,7 +133,7 @@ test('2.2 状态变更拒绝旧预估，正式结果须明确重批，Mock/失�
     await h.request('/assignments/'+h.a.id+'/ai/queue',h.options);await h.wait();assert.equal(calls,1);
     await h.request('/assignments/'+h.a.id+'/ai/queue',{...h.options,ids,previewToken:quote.previewToken},'POST',400);assert.equal(calls,1);
     // Exact current result is a read-only, zero-cost reuse; provider/config changes require explicit regrade.
-    const cached=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(cached.estimatedCny,0);
+    const cached=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(cached.firstReserveCny,0);
     await h.request('/assignments/'+h.a.id+'/ai/preview',{...h.options,provider:'qwen'},'POST',400);
     let a=h.runtime.store.get<Submission>('submissions',h.s.id)!;
     const original=structuredClone(a.grade);
@@ -259,7 +259,7 @@ test('暂停与服务重启不自动重发；续跑仅处理未完成项；重�
   }finally{release();if(!stopped)await h.close();second?.close();}
 });
 
-test('限流重试计入同份预算；放大或未知用量不能自动超额',async()=>{
+test('限流不自动重试；放大或未知用量不能自动超额',async()=>{
   let count=0;let mode:'rate'|'zoom'|'unknown'='rate';
   const h=await harness({env,fetcher:async(_u,init)=>{
     count++;if(mode==='rate')return new Response('',{status:429});
@@ -270,11 +270,11 @@ test('限流重试计入同份预算；放大或未知用量不能自动超额',
     return Response.json({model:body.model,choices:[{message:{content:JSON.stringify({rows:units.units.map(q=>({key:q.key,type:q.type,recognition:'uncertain',verdict:'uncertain',reason:'',reviewReason:'矩阵小字与红笔重叠',pages:[2,3]})),zoomRequests:[{page:2,x:.1,y:.1,width:.3,height:.3}]})},finish_reason:'stop'}]});
   }});
   try{
-    await h.request('/assignments/'+h.a.id+'/ai/queue',h.options);await h.wait();assert.equal(count,2);
-    assert.equal(h.runtime.store.all<AiCall>('ai_calls').length,2);
+    await h.request('/assignments/'+h.a.id+'/ai/queue',h.options);await h.wait();assert.equal(count,1);
+    assert.equal(h.runtime.store.all<AiCall>('ai_calls').length,1);
     const prior=count;mode='zoom';
-    const preview=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});
-    await h.request('/assignments/'+h.a.id+'/ai/queue',{...h.options,regrade:true,perSubmissionBudget:preview.estimatedCny+.000001});await h.wait();
+    const preview=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});
+    await h.request('/assignments/'+h.a.id+'/ai/queue',{...h.options,regrade:true,perSubmissionBudget:preview.firstReserveCny+.000001});await h.wait();
     assert.equal(count,prior+1);
     const partial=h.runtime.store.get<Submission>('submissions',h.s.id)!;assert.ok(partial.grade);assert.equal(partial.status,'review');
     assert.ok(partial.review!.every(r=>r.needsReview&&r.reviewReason?.includes('放大未完成')));
@@ -312,20 +312,20 @@ test('规则版本/参考内容变化使结果缓存失效，人工说明修改�
     await h.request('/assignments/'+h.a.id+'/ai/queue',h.options);await h.wait();
     assert.equal(calls,1);const s=h.runtime.store.get<Submission>('submissions',h.s.id)!;
     await h.request('/submissions/'+s.id+'/review',{revision:s.revision,rows:s.review,manualReport:'只改人工说明',reportBase:'',confirm:false},'PUT');
-    const reused=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(reused.estimatedCny,0);assert.equal(calls,1);
+    const reused=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(reused.firstReserveCny,0);assert.equal(calls,1);
     const current=h.runtime.store.get<Submission>('submissions',s.id)!;
     // Isolate reusable cache from an existing formal result; 2.2 protects that result from implicit replacement.
     h.runtime.store.put('submissions',{...current,status:'uploaded',grade:null,review:null});
-    const reliable=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(reliable.estimatedCny,0);
+    const reliable=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.equal(reliable.firstReserveCny,0);
     const cache=h.runtime.store.all<{id:string;at:string;grade:unknown}>('ai_cache')[0];
     h.runtime.store.putAi('ai_cache',{...cache,at:'2000-01-01T00:00:00Z'});
-    const expired=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.ok(expired.estimatedCny>0);
+    const expired=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',h.options);assert.ok(expired.firstReserveCny>0);
     h.runtime.store.put('submissions',current);
     await h.upload('reference','new-reference.pdf',2);
     await h.request('/assignments/'+h.a.id+'/ai/preview',h.options,'POST',400);
-    const changed=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});assert.ok(changed.estimatedCny>0);assert.equal(calls,1);
+    const changed=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});assert.ok(changed.firstReserveCny>0);assert.equal(calls,1);
     await h.request('/assignments/'+h.a.id,{...h.a,config:{...h.a.config,principles:'经人工确认的新原则'},regradeUnconfirmed:false},'PUT');
-    const newVersion=await h.request<{estimatedCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});assert.ok(newVersion.estimatedCny>0);
+    const newVersion=await h.request<{firstReserveCny:number}>('/assignments/'+h.a.id+'/ai/preview',{...h.options,regrade:true});assert.ok(newVersion.firstReserveCny>0);
     assert.equal(h.runtime.store.get<Submission>('submissions',s.id)!.grade!.version,1);
   }finally{await h.close();}
 });
