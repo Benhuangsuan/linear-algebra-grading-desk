@@ -145,7 +145,7 @@ test('2.13 Windows冷缓存短作业与较大批次计时、缓存复用计时',
     const t=performance.now(),initial=await h.request<CheckResult>(h.path+'/check',{...h.options,ids:h.submissions().map(s=>s.id)}),firstMs=performance.now()-t;assert.equal(initial.items.length,count);assert.ok(firstMs<10000);
     let r=initial;while(!r.done){await new Promise(resolve=>setTimeout(resolve,10));r=await h.request(h.path+'/check/'+r.id);}const allMs=performance.now()-t;assert.ok(r.items.every(i=>i.state==='ready'));
     const cached=performance.now();await h.check();const cachedMs=performance.now()-cached;measurements.push({files:count,pages:count*2,firstMs,allMs,cachedMs});assert.equal(h.seen.length,0);
-  }finally{await h.close();}}await writeFile(join(process.cwd(),'codex工作区','quick-check-timing.json'),JSON.stringify(measurements,null,2));
+  }finally{await h.close();}}await writeFile(join(process.cwd(),'codex输出','codex工作区','quick-check-timing.json'),JSON.stringify(measurements,null,2));
 });
 
 test('2.13 付费解释核对原评分文件指纹，材料替换后免费理由仍可查看',async()=>{

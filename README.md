@@ -1,4 +1,4 @@
-# 线性代数作业批改平台 · 2.13.0（待验收）
+# 线性代数作业批改平台 · 2.13.0
 
 供助教在 Windows 本机使用的非官方评分辅助工具。支持课程与作业管理、PDF 上传和预览、纯人工评分，以及按所选学生进行 DeepSeek / Qwen 视觉初评。AI 建议须人工复核、确认后才作为最终成绩导出。
 
@@ -6,9 +6,9 @@
 
 2.11.0 按文件保留参考答案草稿，支持跨任务免费合并、失败文件单独恢复或重试，以及保留历史版本的重新整理。已有题目、人工规则和历史成绩不会自动覆盖；上传和打开页面均不会收费。
 
-当前正式发布版本为 **v2.12.0**。见 [发布说明](docs/releases/v2.12.0.md)；已有v2.8～v2.11用户请先读 [安全升级指南](docs/升级到v2.12.md)。
+当前正式发布版本为 **v2.13.0**。见[发布说明](docs/releases/v2.13.0.md)；已有v2.8～v2.12用户请先读[安全升级指南](docs/升级到v2.13.md)。
 
-本工作分支为 **v2.13.0，待人工验收，尚未发布**。学生批改改为免费快速检查，允许移出问题文件后直接使用其余检查结果；按次请求预算保护保留。扣分项支持查看依据和主动付费追问，正确题可添加不扣分的助教备注。继续沿用 v2.12 的图像优化、完整分批识别与失败恢复。见 [2.13.0 变更说明](docs/releases/v2.13.0.md)。
+v2.13.0 已完成验收。学生批改改为免费快速检查，允许移出问题文件后直接使用其余检查结果；按次请求预算保护保留。扣分项支持查看依据和主动付费追问，正确题可添加不扣分的助教备注。继续沿用 v2.12 的图像优化、完整分批识别与失败恢复。见 [2.13.0 变更说明](docs/releases/v2.13.0.md)。
 
 ## 从零启动
 
@@ -17,7 +17,7 @@
 从本仓库下载或克隆源码后，在含 `package.json` 的目录打开 PowerShell：
 
 ```powershell
-git clone --branch v2.12.0 https://github.com/Benhuangsuan/linear-algebra-grading-desk.git
+git clone --branch v2.13.0 https://github.com/Benhuangsuan/linear-algebra-grading-desk.git
 cd linear-algebra-grading-desk
 npm.cmd ci
 npm.cmd run build
@@ -75,7 +75,7 @@ AI方式可勾选多份参考PDF，自动识别所选文件全部原页，不需
 
 ## 数据与更新
 
-数据默认保存在本机 `data/`，包括 SQLite、上传原件、图像缓存、成绩、修订历史和费用账本。`DATA_DIR` 可指定独立位置。先停止服务，再备份完整目录，包括实际存在的 WAL/SHM；备份存放在仓库之外。从v2.8～v2.11升级请按[安全升级指南](docs/升级到v2.12.md)先备份、在独立副本验收，再切换；不要覆盖唯一数据库或让旧版读新库。参考草稿、模型最终响应、分批识别恢复记录和费用记录也属于私人DATA_DIR内容，不随源码发布。具体操作见使用指南。开发模式和构建模式不要同时操作同一目录。
+数据默认保存在本机 `data/`，包括 SQLite、上传原件、图像缓存、成绩、修订历史和费用账本。`DATA_DIR` 可指定独立位置。先停止服务，再备份完整目录，包括实际存在的 WAL/SHM；备份存放在仓库之外。从v2.8～v2.12升级请按[安全升级指南](docs/升级到v2.13.md)先备份、在独立副本验收，再切换；不要覆盖唯一数据库或让旧版读新库。参考草稿、模型最终响应、分批识别恢复记录和费用记录也属于私人DATA_DIR内容，不随源码发布。具体操作见使用指南。开发模式和构建模式不要同时操作同一目录。
 
 不要提交 `.env`、`data/`、学生资料、参考答案、名单、成绩、备份或含这些内容的截图。`.gitignore` 不能移除已经提交过的私人文件。更新与旧版兼容注意事项见 [Git 与安全更新](docs/Git版本与安全回退.md)。
 
@@ -103,6 +103,7 @@ npm.cmd run test:independent-grading
 npm.cmd run test:reference-batch
 npm.cmd run test:reference-recovery
 npm.cmd run test:grading-batches
+npm.cmd run test:grading-ux
 ```
 
 测试只生成合成 PDF/DOCX 和虚构身份，使用隔离数据库及模拟 HTTP，不读取正式数据、不请求真实模型。测试自动创建 `codex输出/codex工作区/` 存放产物。浏览器回归使用本机 Chrome / Edge，可用 `BROWSER_PATH` 指定；测试端口 3108–3113，`test:dev` 含 Windows 独占锁检查。
@@ -111,7 +112,7 @@ npm.cmd run test:grading-batches
 
 依赖安全更新及第三方许可见 [依赖说明](docs/依赖安全与许可证.md)。
 
-参见 [2.12.0 发布说明](docs/releases/v2.12.0.md)、[升级指南](docs/升级到v2.12.md) 与 [参与开发](CONTRIBUTING.md)。
+参见 [2.13.0 发布说明](docs/releases/v2.13.0.md)、[升级指南](docs/升级到v2.13.md) 与 [参与开发](CONTRIBUTING.md)。
 
 ## 许可
 
